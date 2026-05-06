@@ -100,7 +100,7 @@ python -m http.server 8767 --directory D:\milkmate\Garment_Tailoring
 
 ### 3. Bump cache version
 
-In `index.html`, increment `?v=N` on `styles.css`, `supabase-config.js`, and `app.js` so the service worker picks up new code:
+Currently on **v=15**. In `index.html`, increment `?v=N` on `styles.css`, `supabase-config.js`, and `app.js` so the service worker picks up new code:
 
 ```html
 <link rel="stylesheet" href="styles.css?v=N+1"/>
@@ -271,7 +271,7 @@ delete from auth.users;
 - **Profile photo**: tap avatar in Settings → file picker → auto-resize 256 px JPEG → stored as base64 in `users.photo` → displays as topbar avatar across all devices
 - **Settings sheet** (gear icon top-right): profile, theme, sign out
 - **Refresh button** in topbar (`⟳`) to manually re-pull from Supabase
-- **Pull-to-refresh** gesture: drag down at the top of any page to re-pull (works in PWA + APK)
+- **Pull-to-refresh** gesture: drag down at the top of any page to re-pull (works in PWA + APK). Threshold 90 px, indicator arrow flips and turns primary-coloured at the release point so you know when you've pulled enough — feels closer to a native app.
 - **Pending approval screen** for new owners — auto-routes to dashboard after approval, or to Rejected screen on rejection
 - **Realtime sync** — changes propagate to other devices in ~1 second via Supabase Postgres-changes subscription
 
@@ -333,4 +333,18 @@ If a new chat session starts and you want to continue:
 
 ---
 
-*Last updated for the v=14 cache: settings sheet + theme picker + profile photo + pull-to-refresh + cascade delete + safe-area-inset for APK status bar.*
+## Changelog highlights
+
+- **v=15** — UI polish (tighter stat tiles, cleaner section headings, smoother list items); pull-to-refresh threshold raised to 90 px with native-style arrow flip on cross + primary-colour ring; APK status-bar overlap fixed via `::before` pseudo-element so dashboard cards no longer clip at the top.
+- **v=14** — Software admin "Delete workshop" with cascade through all related rows (orders/lots/assignments/production/payments/etc); shops_delete + users_delete RLS policies. Hindi role labels swapped to English business terms (Owner / Contractor / Worker / Workshop). Pull-to-refresh first introduced. Initial APK status-bar fix.
+- **v=13** — Settings sheet (gear icon top-right) with profile photo upload, theme picker (Light · indigo / Midnight / Forest / Cream), Sign out. Profile photo replaces gear icon as a circular avatar. Themes apply via `body.theme-*` CSS-variable overrides; persisted to localStorage and applied before first paint to avoid flash.
+- **v=12** — Refresh button (`⟳`) in topbar; viewRejected screen and fix for stuck "Waiting for approval" after rejection.
+- **v=11** — Renamed app from KarkhanaPro to DarziMate (sister to MilkMate); switched Capacitor `appId` to `com.darzimate.app` and rebuilt APK; renamed all user-facing strings; localStorage key, debug handle, and Supabase config var renamed in lockstep.
+- **v=10** — Software admin role + approval queue. `is_software_admin()` SECURITY DEFINER bypass on every RLS policy. Auto-elevation when signing up with `SOFTWARE_ADMIN_MOBILE` (8858141463); other admin signups go to `status='pending'` until approved. New `viewSoftwareAdmin` with home/pending/workshops/reports tabs.
+- **v=9** — Real Supabase Auth via mobile-as-fake-email pattern. Self-signup flows for all three roles (admin / contractor / worker) with mobile-based parent lookup. Multi-device sync via `Store.upsertAll()` debounced upsert + `subscribeRealtime` postgres-changes channel. Strict RLS replaces local-only password hashing.
+- **v=8** — Switched to a dedicated Supabase project (xeigvfmejmvkzhwbjozp) and dropped the `karkhana` Postgres-schema namespace — back to `public` for simplicity.
+- **v=7 and below** — m:m admin↔contractor relationship; Phase 2+3 (orders, lots, worker assignments, daily piece tracking, piece-rate earnings, drill-down navigation); APK shell built with Capacitor; Phase 1 foundation (Store, Auth, router, login).
+
+---
+
+*Last updated for the v=15 cache.*
