@@ -458,6 +458,28 @@ button { font-family: inherit; }
 }
 .big-tap:active { transform: scale(0.98); }
 
+/* ─── Progress bar ─── */
+.progress {
+  height: 8px;
+  background: var(--c-bg);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--c-primary), var(--c-accent));
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* ─── Stat clickable affordance ─── */
+.stat.clickable {
+  transition: background 0.1s, transform 0.05s;
+}
+.stat.clickable:hover  { background: var(--c-primary-50); }
+.stat.clickable:active { transform: scale(0.98); }
+
 /* ─── Section heading ─── */
 .section-h {
   display: flex;

@@ -1,8 +1,9 @@
 /* ====================================================================
    KarkhanaPro — Tailoring Production Manager
-   Phase 1: foundation (Store, Auth, router, login, role dashboards).
-   Storage: Supabase if supabase-config.js is filled in; otherwise
-            localStorage-only demo mode with seeded users.
+   Phase 1+2+3: Auth, drill-downs, daily production tracking,
+   piece-rate earnings, payments. Multi-role: admin / contractor / worker.
+
+   Storage: localStorage cache (always) + Supabase (when configured).
    ==================================================================== */
 
 (() => {
@@ -25,15 +26,26 @@ if (REMOTE_ENABLED) {
 
 /* ─── Tiny utilities ──────────────────────────────────────── */
 const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const uid = (prefix = 'id') => prefix + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
 const fmtINR = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
-const escapeHtml = (s) => String(s == null ? '' : s)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0,10); };
+const fmtDate = (s) => {
+  if (!s) return '—';
+  const d = new Date(s);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+const fmtRelDate = (s) => {
+  if (!s) return '—';
+  const d = new Date(s);
+  const t = new Date();
+  const diff = Math.floor((t - d) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  if (diff < 7) return diff + ' days ago';
+  return fmtDate(s);
+};
 
-// Build a DOM element from {tag, attrs, children}
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   if (attrs) {
@@ -53,8 +65,6 @@ function el(tag, attrs, ...children) {
   return node;
 }
 
-// Lightweight password hash (NOT cryptographically secure, fine for demo).
-// For production with Supabase, switch to Supabase Auth.
 async function hashPassword(pw) {
   const enc = new TextEncoder().encode('karkhana-v1::' + pw);
   const buf = await crypto.subtle.digest('SHA-256', enc);
@@ -71,105 +81,405 @@ function toast(msg, type = '') {
   setTimeout(() => t.remove(), 2700);
 }
 
-function openModal(content, opts = {}) {
+function openModal(content) {
   const modal = $('#modal');
   const body = $('#modalBody');
   body.innerHTML = '';
   body.appendChild(typeof content === 'string' ? el('div', { html: content }) : content);
   modal.hidden = false;
-  if (opts.onOpen) opts.onOpen(body);
+  // Autofocus first input
+  setTimeout(() => {
+    const first = body.querySelector('input,select,textarea,button.btn');
+    if (first && first.tagName !== 'BUTTON') first.focus();
+  }, 50);
 }
 function closeModal() { $('#modal').hidden = true; $('#modalBody').innerHTML = ''; }
 document.addEventListener('click', (e) => {
   if (e.target.matches('[data-close]') || e.target.closest('[data-close]')) closeModal();
 });
 
-/* ─── Store: localStorage cache + (optional) Supabase ─────── */
+/* ─── Store ───────────────────────────────────────────────── */
 const Store = {
   KEY: 'karkhanapro-v1',
   data: null,
   remoteReady: false,
 
   loadFromCache() {
-    try {
-      const raw = localStorage.getItem(this.KEY);
-      this.data = raw ? JSON.parse(raw) : null;
-    } catch { this.data = null; }
+    try { this.data = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch { this.data = null; }
     if (!this.data) this.data = seed();
+    this.migrate();
   },
-
-  saveCache() {
-    try { localStorage.setItem(this.KEY, JSON.stringify(this.data)); } catch {}
+  migrate() {
+    // Ensure all collections exist on older caches
+    const d = this.data;
+    ['users','designs','piece_types','orders','lots','worker_assignments',
+     'production_entries','payments','notifications','holidays'].forEach(k => { if (!d[k]) d[k] = []; });
   },
+  saveCache() { try { localStorage.setItem(this.KEY, JSON.stringify(this.data)); } catch {} },
 
-  // Supabase load — wired up here, no-op until tables + RLS are in place
-  // and a Supabase Auth session exists. Phase 2+ will use this fully.
   async loadFromRemote() {
     if (!sb) return false;
     try {
       const { data: session } = await sb.auth.getSession();
       if (!session?.session) return false;
-      // Phase 2 will fill these in.
       this.remoteReady = true;
       return true;
-    } catch (e) {
-      console.warn('Remote load failed', e);
-      return false;
-    }
+    } catch (e) { console.warn('Remote load failed', e); return false; }
   },
-
   async load() {
     this.loadFromCache();
     if (REMOTE_ENABLED) await this.loadFromRemote();
   },
-
-  save() {
-    this.saveCache();
-    // Remote save scheduled in Phase 2 (per-table upserts based on diff).
-  }
+  save() { this.saveCache(); }
 };
 
-/* ─── Seed data (demo mode) ───────────────────────────────── */
+/* ─── Seed data ───────────────────────────────────────────── */
 function seed() {
   const shopId  = 'shop_demo';
   const adminId = 'u_admin';
   const conId   = 'u_contractor1';
   const workerId = 'u_worker1';
+  const workerId2 = 'u_worker2';
+
+  const dShirtId = 'd_shirt';
+  const dKurtaId = 'd_kurta';
+
+  // piece type ids
+  const ptShirtCutId = 'pt_shirt_cut';
+  const ptShirtStitchId = 'pt_shirt_stitch';
+  const ptShirtFinishId = 'pt_shirt_finish';
+  const ptKurtaCutId = 'pt_kurta_cut';
+  const ptKurtaStitchId = 'pt_kurta_stitch';
+  const ptKurtaEmbId = 'pt_kurta_emb';
+
+  const orderId = 'o_demo1';
+  const lot1Id = 'l_demo1';
+  const lot2Id = 'l_demo2';
+
+  const a1 = 'a_cut1', a2 = 'a_stitch1';
+
+  const tNow = new Date().toISOString();
 
   return {
-    session: null, // { userId, role, shopId }
+    session: null,
     shop: {
-      id: shopId,
-      name: 'Demo Karkhana',
-      owner_user_id: adminId,
-      address: '',
-      phone: '',
-      upi_id: '',
-      upi_name: ''
+      id: shopId, name: 'Demo Karkhana', owner_user_id: adminId,
+      address: 'Plot 12, Industrial Area', phone: '9999999999',
+      upi_id: 'demo@upi', upi_name: 'Demo Karkhana'
     },
     users: [
       { id: adminId, shop_id: shopId, mobile: '9999999999', name: 'Bada Seth (Admin)',
-        role: 'admin', password_hash: null, parent_user_id: null, photo: null, status: 'active' },
+        role: 'admin', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
       { id: conId, shop_id: shopId, mobile: '8888888888', name: 'Chhota Seth (Contractor)',
-        role: 'contractor', password_hash: null, parent_user_id: adminId, photo: null, status: 'active' },
-      { id: workerId, shop_id: shopId, mobile: '7777777777', name: 'Darzi Ramesh (Worker)',
-        role: 'worker', password_hash: null, parent_user_id: conId, photo: null, status: 'active' }
+        role: 'contractor', password_hash: null, parent_user_id: adminId, photo: null, status: 'active', created_at: tNow },
+      { id: workerId, shop_id: shopId, mobile: '7777777777', name: 'Darzi Ramesh',
+        role: 'worker', password_hash: null, parent_user_id: conId, photo: null, status: 'active', created_at: tNow },
+      { id: workerId2, shop_id: shopId, mobile: '7777777778', name: 'Darzi Suresh',
+        role: 'worker', password_hash: null, parent_user_id: conId, photo: null, status: 'active', created_at: tNow }
     ],
-    designs: [],
-    piece_types: [],
-    orders: [],
-    lots: [],
-    worker_assignments: [],
-    production_entries: [],
-    payments: [],
+    designs: [
+      { id: dShirtId, shop_id: shopId, name: 'Formal Shirt', sku: 'SH-001', photo: null,
+        default_rate: 60, active: true, created_at: tNow },
+      { id: dKurtaId, shop_id: shopId, name: 'Cotton Kurta', sku: 'KU-002', photo: null,
+        default_rate: 90, active: true, created_at: tNow }
+    ],
+    piece_types: [
+      { id: ptShirtCutId,    shop_id: shopId, design_id: dShirtId, name: 'Cutting',    default_rate: 12, sort_order: 1 },
+      { id: ptShirtStitchId, shop_id: shopId, design_id: dShirtId, name: 'Stitching',  default_rate: 30, sort_order: 2 },
+      { id: ptShirtFinishId, shop_id: shopId, design_id: dShirtId, name: 'Finishing',  default_rate: 18, sort_order: 3 },
+      { id: ptKurtaCutId,    shop_id: shopId, design_id: dKurtaId, name: 'Cutting',    default_rate: 15, sort_order: 1 },
+      { id: ptKurtaStitchId, shop_id: shopId, design_id: dKurtaId, name: 'Stitching',  default_rate: 45, sort_order: 2 },
+      { id: ptKurtaEmbId,    shop_id: shopId, design_id: dKurtaId, name: 'Embroidery', default_rate: 30, sort_order: 3 }
+    ],
+    orders: [
+      { id: orderId, shop_id: shopId, design_id: dShirtId, total_qty: 200,
+        deadline: daysAgo(-7), notes: 'Wholesale order — 200 formal shirts', status: 'in_progress',
+        created_by: adminId, created_at: tNow }
+    ],
+    lots: [
+      { id: lot1Id, shop_id: shopId, order_id: orderId, lot_no: 1, qty: 100,
+        contractor_id: conId, status: 'in_progress', assigned_at: tNow, created_at: tNow },
+      { id: lot2Id, shop_id: shopId, order_id: orderId, lot_no: 2, qty: 100,
+        contractor_id: null, status: 'unassigned', assigned_at: null, created_at: tNow }
+    ],
+    worker_assignments: [
+      { id: a1, shop_id: shopId, lot_id: lot1Id, worker_id: workerId, contractor_id: conId,
+        piece_type_id: ptShirtCutId, qty_assigned: 50, rate: 12, status: 'in_progress', assigned_at: tNow },
+      { id: a2, shop_id: shopId, lot_id: lot1Id, worker_id: workerId, contractor_id: conId,
+        piece_type_id: ptShirtStitchId, qty_assigned: 50, rate: 30, status: 'open', assigned_at: tNow }
+    ],
+    production_entries: [
+      { id: uid('pe'), shop_id: shopId, assignment_id: a1, worker_id: workerId, contractor_id: conId,
+        date: daysAgo(2), pieces_done: 15, notes: null, photo: null, created_at: tNow },
+      { id: uid('pe'), shop_id: shopId, assignment_id: a1, worker_id: workerId, contractor_id: conId,
+        date: daysAgo(1), pieces_done: 18, notes: null, photo: null, created_at: tNow }
+    ],
+    payments: [
+      { id: uid('p'), shop_id: shopId, payer_id: conId, payee_id: workerId,
+        amount: 200, type: 'advance', method: 'cash', date: daysAgo(2),
+        note: 'Advance for the week', against_assignment_id: null, against_lot_id: null, created_at: tNow }
+    ],
     notifications: [],
     holidays: []
   };
 }
 
+/* ─── Domain ──────────────────────────────────────────────── */
+const Domain = {
+  /* Designs / piece types */
+  designs() { return Store.data.designs; },
+  designById(id) { return this.designs().find(d => d.id === id); },
+  pieceTypesForDesign(designId) {
+    return Store.data.piece_types.filter(p => p.design_id === designId)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  },
+  pieceTypeById(id) { return Store.data.piece_types.find(p => p.id === id); },
+  addDesign({ name, sku, default_rate, piece_types }) {
+    const d = {
+      id: uid('d'), shop_id: Store.data.shop.id,
+      name: name.trim(), sku: (sku || '').trim() || null, photo: null,
+      default_rate: Number(default_rate) || 0, active: true,
+      created_at: new Date().toISOString()
+    };
+    Store.data.designs.push(d);
+    (piece_types || []).forEach((pt, i) => {
+      if (!pt.name || !pt.name.trim()) return;
+      Store.data.piece_types.push({
+        id: uid('pt'), shop_id: d.shop_id, design_id: d.id,
+        name: pt.name.trim(), default_rate: Number(pt.rate) || 0, sort_order: i + 1
+      });
+    });
+    Store.save();
+    return d;
+  },
+
+  /* Orders / lots */
+  orders() { return Store.data.orders; },
+  orderById(id) { return this.orders().find(o => o.id === id); },
+  lotsForOrder(orderId) {
+    return Store.data.lots.filter(l => l.order_id === orderId)
+      .sort((a, b) => a.lot_no - b.lot_no);
+  },
+  lotById(id) { return Store.data.lots.find(l => l.id === id); },
+  addOrder({ design_id, total_qty, deadline, notes }) {
+    const o = {
+      id: uid('o'), shop_id: Store.data.shop.id,
+      design_id, total_qty: Number(total_qty),
+      deadline: deadline || null, notes: (notes || '').trim() || null,
+      status: 'open', created_by: App.user?.id || null,
+      created_at: new Date().toISOString()
+    };
+    Store.data.orders.push(o);
+    Store.save();
+    return o;
+  },
+  splitOrderIntoLots(orderId, lotCount, qtyPerLot) {
+    const order = this.orderById(orderId);
+    if (!order) return;
+    const startNo = this.lotsForOrder(orderId).length + 1;
+    for (let i = 0; i < lotCount; i++) {
+      Store.data.lots.push({
+        id: uid('l'), shop_id: order.shop_id, order_id: orderId,
+        lot_no: startNo + i, qty: Number(qtyPerLot),
+        contractor_id: null, status: 'unassigned', assigned_at: null,
+        created_at: new Date().toISOString()
+      });
+    }
+    Store.save();
+  },
+  assignLotToContractor(lotId, contractorId) {
+    const l = this.lotById(lotId);
+    if (!l) return;
+    l.contractor_id = contractorId;
+    l.status = 'assigned';
+    l.assigned_at = new Date().toISOString();
+    Store.save();
+  },
+
+  /* Worker assignments */
+  assignmentsForLot(lotId) {
+    return Store.data.worker_assignments.filter(a => a.lot_id === lotId);
+  },
+  assignmentsForWorker(workerId) {
+    return Store.data.worker_assignments.filter(a => a.worker_id === workerId);
+  },
+  assignmentsForContractor(contractorId) {
+    return Store.data.worker_assignments.filter(a => a.contractor_id === contractorId);
+  },
+  assignmentById(id) { return Store.data.worker_assignments.find(a => a.id === id); },
+  addAssignment({ lot_id, worker_id, contractor_id, piece_type_id, qty_assigned, rate }) {
+    const lot = this.lotById(lot_id);
+    if (!lot) return null;
+    const a = {
+      id: uid('a'), shop_id: lot.shop_id,
+      lot_id, worker_id, contractor_id, piece_type_id,
+      qty_assigned: Number(qty_assigned), rate: Number(rate),
+      status: 'open', assigned_at: new Date().toISOString()
+    };
+    Store.data.worker_assignments.push(a);
+    Store.save();
+    return a;
+  },
+
+  /* Production */
+  entriesForAssignment(assignmentId) {
+    return Store.data.production_entries.filter(e => e.assignment_id === assignmentId)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  },
+  entriesForWorker(workerId, fromDate, toDate) {
+    return Store.data.production_entries.filter(e =>
+      e.worker_id === workerId &&
+      (!fromDate || e.date >= fromDate) &&
+      (!toDate || e.date <= toDate)
+    );
+  },
+  entriesForContractor(contractorId, fromDate, toDate) {
+    return Store.data.production_entries.filter(e =>
+      e.contractor_id === contractorId &&
+      (!fromDate || e.date >= fromDate) &&
+      (!toDate || e.date <= toDate)
+    );
+  },
+  addProductionEntry({ assignment_id, pieces_done, date, notes }) {
+    const a = this.assignmentById(assignment_id);
+    if (!a) throw new Error('Assignment not found');
+    const e = {
+      id: uid('pe'), shop_id: a.shop_id,
+      assignment_id, worker_id: a.worker_id, contractor_id: a.contractor_id,
+      date: date || today(), pieces_done: Number(pieces_done),
+      notes: (notes || '').trim() || null, photo: null,
+      created_at: new Date().toISOString()
+    };
+    Store.data.production_entries.push(e);
+
+    // Auto-bump statuses
+    const done = this.assignmentPiecesDone(assignment_id);
+    if (done >= a.qty_assigned) a.status = 'completed';
+    else if (a.status === 'open') a.status = 'in_progress';
+
+    const lot = this.lotById(a.lot_id);
+    if (lot && lot.status === 'assigned') lot.status = 'in_progress';
+
+    // If all assignments for the lot are completed → mark lot completed
+    if (lot) {
+      const allAssigns = this.assignmentsForLot(lot.id);
+      if (allAssigns.length > 0 && allAssigns.every(x => x.status === 'completed')) {
+        lot.status = 'completed';
+      }
+    }
+
+    // Order: in_progress when any production exists
+    const order = this.orderById(lot.order_id);
+    if (order && order.status === 'open') order.status = 'in_progress';
+    if (order) {
+      const allLots = this.lotsForOrder(order.id);
+      if (allLots.length > 0 && allLots.every(x => x.status === 'completed')) {
+        order.status = 'completed';
+      }
+    }
+
+    Store.save();
+    return e;
+  },
+  assignmentPiecesDone(assignmentId) {
+    return this.entriesForAssignment(assignmentId)
+      .reduce((s, e) => s + (Number(e.pieces_done) || 0), 0);
+  },
+  assignmentEarned(assignmentId) {
+    const a = this.assignmentById(assignmentId);
+    if (!a) return 0;
+    return this.assignmentPiecesDone(assignmentId) * Number(a.rate);
+  },
+  lotProgress(lotId) {
+    const assigns = this.assignmentsForLot(lotId);
+    const total = assigns.reduce((s, a) => s + Number(a.qty_assigned), 0);
+    const done = assigns.reduce((s, a) => s + this.assignmentPiecesDone(a.id), 0);
+    return { done, total, percent: total > 0 ? Math.round(done * 100 / total) : 0 };
+  },
+  orderProgress(orderId) {
+    const order = this.orderById(orderId);
+    if (!order) return { done: 0, total: 0, percent: 0 };
+    const lots = this.lotsForOrder(orderId);
+    const totalLotQty = lots.reduce((s, l) => s + l.qty, 0);
+    const totalDoneFraction = lots.reduce((s, l) => s + (this.lotProgress(l.id).percent / 100) * l.qty, 0);
+    return {
+      done: Math.round(totalDoneFraction),
+      total: order.total_qty,
+      assigned: totalLotQty,
+      percent: order.total_qty > 0 ? Math.round(totalDoneFraction * 100 / order.total_qty) : 0
+    };
+  },
+
+  /* Users */
+  userById(id) { return Store.data.users.find(u => u.id === id); },
+  contractors() { return Store.data.users.filter(u => u.role === 'contractor'); },
+  workers() { return Store.data.users.filter(u => u.role === 'worker'); },
+  workersForContractor(contractorId) {
+    return Store.data.users.filter(u => u.role === 'worker' && u.parent_user_id === contractorId);
+  },
+  lotsForContractor(contractorId) {
+    return Store.data.lots.filter(l => l.contractor_id === contractorId);
+  },
+  async addUser({ name, mobile, role, parent_user_id, password }) {
+    if (Store.data.users.some(u => u.mobile === mobile)) throw new Error('Mobile already registered');
+    const u = {
+      id: uid('u'), shop_id: Store.data.shop.id,
+      mobile: mobile.trim(), name: name.trim(), role,
+      password_hash: await hashPassword(password || '1234'),
+      parent_user_id: parent_user_id || null, photo: null,
+      status: 'active', created_at: new Date().toISOString()
+    };
+    Store.data.users.push(u);
+    Store.save();
+    return u;
+  },
+
+  /* Payments */
+  paymentsByPayee(payeeId) {
+    return Store.data.payments.filter(p => p.payee_id === payeeId)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  },
+  paymentsByPayer(payerId) {
+    return Store.data.payments.filter(p => p.payer_id === payerId)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  },
+  addPayment({ payer_id, payee_id, amount, type, method, date, note }) {
+    const p = {
+      id: uid('p'), shop_id: Store.data.shop.id,
+      payer_id, payee_id,
+      amount: Number(amount), type, method: method || 'cash',
+      date: date || today(), note: (note || '').trim() || null,
+      against_assignment_id: null, against_lot_id: null,
+      created_at: new Date().toISOString()
+    };
+    Store.data.payments.push(p);
+    Store.save();
+    return p;
+  },
+  workerEarned(workerId) {
+    return this.assignmentsForWorker(workerId)
+      .reduce((s, a) => s + this.assignmentEarned(a.id), 0);
+  },
+  workerPaid(workerId) {
+    return Store.data.payments
+      .filter(p => p.payee_id === workerId && ['settlement','advance','bonus'].includes(p.type))
+      .reduce((s, p) => s + Number(p.amount), 0);
+  },
+  workerBalance(workerId) {
+    return this.workerEarned(workerId) - this.workerPaid(workerId);
+  },
+  contractorBalanceToPay(contractorId) {
+    // sum of (earned - paid) across this contractor's workers
+    return this.workersForContractor(contractorId)
+      .reduce((s, w) => s + Math.max(0, this.workerBalance(w.id)), 0);
+  },
+
+  /* Time helpers */
+  weekStart() { const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0,10); }
+};
+
 /* ─── Auth ────────────────────────────────────────────────── */
 const Auth = {
-  // Bootstrap demo passwords on first run: every seeded user starts with password "1234".
   async ensureSeedPasswords() {
     let touched = false;
     for (const u of Store.data.users) {
@@ -180,13 +490,11 @@ const Auth = {
     }
     if (touched) Store.save();
   },
-
   current() {
     const s = Store.data && Store.data.session;
     if (!s) return null;
     return Store.data.users.find(u => u.id === s.userId) || null;
   },
-
   async login(mobile, password) {
     const m = String(mobile || '').trim();
     const u = Store.data.users.find(x => x.mobile === m && x.status !== 'disabled');
@@ -197,25 +505,25 @@ const Auth = {
     Store.save();
     return u;
   },
-
-  logout() {
-    Store.data.session = null;
-    Store.save();
-  }
+  logout() { Store.data.session = null; Store.save(); }
 };
 
 /* ─── App state + router ──────────────────────────────────── */
 const App = {
-  route: null,         // 'login' | 'admin' | 'contractor' | 'worker'
+  route: null,           // 'login' | 'admin' | 'contractor' | 'worker'
   user: null,
-  tab: 'home'          // current tab within a role dashboard
+  tab: 'home',
+  detail: null           // { type: 'order'|'lot'|'worker'|'contractor', id: '...' }
 };
 
-function navigate(route, opts = {}) {
-  App.route = route;
-  if (opts.tab) App.tab = opts.tab;
+function navigate(opts = {}) {
+  if (opts.tab !== undefined) { App.tab = opts.tab; App.detail = null; }
+  if (opts.detail !== undefined) App.detail = opts.detail;
   render();
 }
+function goTab(tab) { App.tab = tab; App.detail = null; render(); }
+function goDetail(type, id) { App.detail = { type, id }; render(); }
+function goBack() { App.detail = null; render(); }
 
 function render() {
   const view = $('#view');
@@ -229,22 +537,20 @@ function render() {
     view.appendChild(viewLogin());
     return;
   }
-
   document.getElementById('app').classList.remove('no-tab');
 
-  if (App.user.role === 'admin')      view.appendChild(viewAdmin());
+  if (App.user.role === 'admin')           view.appendChild(viewAdmin());
   else if (App.user.role === 'contractor') view.appendChild(viewContractor());
-  else if (App.user.role === 'worker')      view.appendChild(viewWorker());
+  else if (App.user.role === 'worker')     view.appendChild(viewWorker());
   else view.appendChild(el('div', { class: 'empty' }, 'Unknown role.'));
 
-  // Build tabbar for the role
   const tabs = roleTabs(App.user.role);
   if (tabs.length > 1) {
     tabbar.hidden = false;
     for (const t of tabs) {
       tabbar.appendChild(el('button', {
-        class: 'tab' + (App.tab === t.key ? ' active' : ''),
-        onclick: () => { App.tab = t.key; render(); }
+        class: 'tab' + (App.tab === t.key && !App.detail ? ' active' : ''),
+        onclick: () => goTab(t.key)
       },
         el('div', { class: 'ico' }, t.ico),
         el('div', null, t.label)
@@ -293,26 +599,21 @@ function viewLogin() {
       const mobile = form.querySelector('[name=mobile]').value.trim();
       const password = form.querySelector('[name=password]').value;
       const btn = form.querySelector('button[type=submit]');
-      btn.disabled = true;
-      btn.textContent = 'Signing in…';
+      btn.disabled = true; btn.textContent = 'Signing in…';
       try {
         const u = await Auth.login(mobile, password);
-        App.user = u;
-        App.route = u.role;
-        App.tab = 'home';
+        App.user = u; App.route = u.role; App.tab = 'home'; App.detail = null;
         toast('Welcome, ' + u.name, 'success');
         render();
       } catch (err) {
         toast(err.message || 'Login failed', 'error');
-        btn.disabled = false;
-        btn.textContent = 'Sign in';
+        btn.disabled = false; btn.textContent = 'Sign in';
       }
     }
   });
-
   form.appendChild(el('div', { class: 'field' },
     el('label', null, 'Mobile number'),
-    el('input', { type: 'tel', name: 'mobile', required: true, autocomplete: 'tel',
+    el('input', { type: 'tel', name: 'mobile', required: true,
       placeholder: '10-digit mobile', maxlength: 10, inputmode: 'numeric' })
   ));
   form.appendChild(el('div', { class: 'field' },
@@ -320,17 +621,14 @@ function viewLogin() {
     el('input', { type: 'password', name: 'password', required: true, placeholder: 'Password' })
   ));
   form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign in'));
-
   wrap.appendChild(form);
 
-  // Demo helper
   wrap.appendChild(el('div', { class: 'card' },
     el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Demo accounts (password: 1234)'),
     demoUserRow('admin',      '9999999999', 'Bada Seth (Admin)'),
     demoUserRow('contractor', '8888888888', 'Chhota Seth (Contractor)'),
     demoUserRow('worker',     '7777777777', 'Darzi Ramesh (Worker)')
   ));
-
   return wrap;
 }
 
@@ -338,7 +636,7 @@ function demoUserRow(role, mobile, name) {
   return el('div', { class: 'list-item', onclick: async () => {
     try {
       const u = await Auth.login(mobile, '1234');
-      App.user = u; App.route = u.role; App.tab = 'home';
+      App.user = u; App.route = u.role; App.tab = 'home'; App.detail = null;
       toast('Welcome, ' + u.name, 'success');
       render();
     } catch (e) { toast(e.message, 'error'); }
@@ -352,133 +650,43 @@ function demoUserRow(role, mobile, name) {
   );
 }
 
-/* ─── Topbar helper ───────────────────────────────────────── */
-function topbar(title, subtitle) {
+/* ─── Topbar / detail topbar ──────────────────────────────── */
+function topbar(title, subtitle, opts = {}) {
+  const left = opts.back
+    ? el('button', {
+        class: 'icon-btn', title: 'Back', 'aria-label': 'Back',
+        onclick: () => goBack()
+      }, '←')
+    : null;
+  const right = opts.action || el('button', {
+      class: 'icon-btn', title: 'Logout', 'aria-label': 'Logout',
+      onclick: () => {
+        if (!confirm('Sign out?')) return;
+        Auth.logout(); App.user = null; App.route = 'login'; App.detail = null;
+        render();
+      }
+    }, '⎋');
   return el('div', { class: 'topbar' },
+    left,
     el('div', { style: 'flex:1' },
       el('h2', null, title),
       subtitle ? el('div', { class: 'sub' }, subtitle) : null
     ),
-    el('button', {
-      class: 'icon-btn', title: 'Logout', 'aria-label': 'Logout',
-      onclick: () => {
-        if (!confirm('Sign out?')) return;
-        Auth.logout();
-        App.user = null;
-        App.route = 'login';
-        render();
-      }
-    }, '⎋')
+    right
   );
 }
 
-/* ─── Admin dashboard ─────────────────────────────────────── */
-function viewAdmin() {
-  const wrap = el('div');
-  wrap.appendChild(topbar('KarkhanaPro', 'Bada Seth · ' + Store.data.shop.name));
-
-  if (App.tab === 'home') {
-    const orders = Store.data.orders;
-    const lots = Store.data.lots;
-    const totalPieces = lots.reduce((s, l) => s + l.qty, 0);
-    const contractors = Store.data.users.filter(u => u.role === 'contractor');
-    const workers = Store.data.users.filter(u => u.role === 'worker');
-    const totalPaid = Store.data.payments
-      .filter(p => p.type === 'settlement' || p.type === 'advance' || p.type === 'bonus')
-      .reduce((s, p) => s + Number(p.amount || 0), 0);
-
-    wrap.appendChild(el('div', { class: 'stats' },
-      stat('Orders', orders.length, 'primary'),
-      stat('Pieces in lots', totalPieces),
-      stat('Contractors', contractors.length, 'accent'),
-      stat('Workers', workers.length, 'success'),
-      stat('Total paid', fmtINR(totalPaid), 'accent')
-    ));
-
-    wrap.appendChild(sectionH('Quick actions'));
-    wrap.appendChild(el('div', { class: 'card' },
-      el('div', { class: 'col' },
-        el('button', { class: 'btn full', onclick: () => phase2Toast() }, '+ New bulk order'),
-        el('button', { class: 'btn secondary full', onclick: () => phase2Toast() }, '+ Add contractor'),
-        el('button', { class: 'btn secondary full', onclick: () => phase2Toast() }, '+ Add design')
-      )
-    ));
-
-    wrap.appendChild(phase2Banner('Phase 2 will add: orders, lots, contractor assignment, designs.'));
-  }
-  else if (App.tab === 'orders')      wrap.appendChild(comingSoon('Bulk orders', 'Phase 2'));
-  else if (App.tab === 'contractors') wrap.appendChild(comingSoon('Contractors', 'Phase 2'));
-  else if (App.tab === 'designs')     wrap.appendChild(comingSoon('Designs & rates', 'Phase 2'));
-  else if (App.tab === 'reports')     wrap.appendChild(comingSoon('Reports', 'Phase 5'));
-
-  return wrap;
-}
-
-/* ─── Contractor dashboard ────────────────────────────────── */
-function viewContractor() {
-  const wrap = el('div');
-  wrap.appendChild(topbar('KarkhanaPro', 'Chhota Seth · ' + App.user.name));
-
-  if (App.tab === 'home') {
-    const myLots = Store.data.lots.filter(l => l.contractor_id === App.user.id);
-    const myWorkers = Store.data.users.filter(u => u.parent_user_id === App.user.id);
-
-    wrap.appendChild(el('div', { class: 'stats' },
-      stat('My lots', myLots.length, 'primary'),
-      stat('Workers', myWorkers.length, 'success'),
-      stat('Pieces today', 0, 'accent'),
-      stat('Balance to pay', fmtINR(0))
-    ));
-
-    wrap.appendChild(sectionH('Quick actions'));
-    wrap.appendChild(el('div', { class: 'card' },
-      el('div', { class: 'col' },
-        el('button', { class: 'btn full', onclick: () => phase2Toast() }, '+ Add worker'),
-        el('button', { class: 'btn secondary full', onclick: () => phase2Toast() }, '+ Assign work')
-      )
-    ));
-
-    wrap.appendChild(phase2Banner('Phase 3 will add: assigning pieces to workers, daily progress.'));
-  }
-  else if (App.tab === 'lots')     wrap.appendChild(comingSoon('My Lots', 'Phase 2'));
-  else if (App.tab === 'workers')  wrap.appendChild(comingSoon('My Workers', 'Phase 3'));
-  else if (App.tab === 'payments') wrap.appendChild(comingSoon('Payments', 'Phase 4'));
-
-  return wrap;
-}
-
-/* ─── Worker dashboard ────────────────────────────────────── */
-function viewWorker() {
-  const wrap = el('div');
-  wrap.appendChild(topbar('KarkhanaPro', 'Darzi · ' + App.user.name));
-
-  if (App.tab === 'home') {
-    wrap.appendChild(el('button', {
-      class: 'big-tap',
-      onclick: () => phase2Toast()
-    }, '+ Pieces done today'));
-
-    wrap.appendChild(el('div', { class: 'stats' },
-      stat('Today', 0, 'primary'),
-      stat('This week', 0, 'accent'),
-      stat('To earn', fmtINR(0)),
-      stat('Paid', fmtINR(0), 'success')
-    ));
-
-    wrap.appendChild(phase2Banner('Phase 3 will add: assigned work, daily entry, earnings.'));
-  }
-  else if (App.tab === 'work')     wrap.appendChild(comingSoon('My Work', 'Phase 3'));
-  else if (App.tab === 'earnings') wrap.appendChild(comingSoon('My Earnings', 'Phase 4'));
-
-  return wrap;
-}
-
-/* ─── Reusable view fragments ─────────────────────────────── */
-function stat(label, value, variant = '') {
-  return el('div', { class: 'stat ' + variant },
+/* ─── Reusable UI fragments ───────────────────────────────── */
+function stat(label, value, variant = '', onClick) {
+  const node = el('div', { class: 'stat ' + variant + (onClick ? ' clickable' : '') },
     el('div', { class: 'label' }, label),
     el('div', { class: 'value' }, String(value))
   );
+  if (onClick) {
+    node.style.cursor = 'pointer';
+    node.addEventListener('click', onClick);
+  }
+  return node;
 }
 function sectionH(title, action) {
   return el('div', { class: 'section-h' },
@@ -486,27 +694,1009 @@ function sectionH(title, action) {
     action || null
   );
 }
-function comingSoon(title, phase) {
+function emptyState(ico, text, actionLabel, onAction) {
   return el('div', { class: 'empty' },
-    el('div', { class: 'ico' }, '🚧'),
-    el('h2', null, title),
-    el('p', { class: 'muted' }, 'Coming in ' + phase + '.')
+    el('div', { class: 'ico' }, ico),
+    el('div', { class: 'muted', style: 'margin-bottom:12px' }, text),
+    onAction ? el('button', { class: 'btn', onclick: onAction }, actionLabel) : null
   );
 }
-function phase2Banner(text) {
-  return el('div', { class: 'card', style: 'background: var(--c-primary-50); border-color: transparent;' },
-    el('div', { class: 'row gap-12' },
-      el('div', { style: 'font-size: 24px' }, '🛠️'),
-      el('div', null,
-        el('div', { style: 'font-weight:700;color:var(--c-primary)' }, 'Foundation ready'),
-        el('div', { class: 'muted' }, text)
+function progressBar(percent) {
+  const p = Math.max(0, Math.min(100, percent || 0));
+  return el('div', { class: 'progress' },
+    el('div', { class: 'progress-fill', style: { width: p + '%' } })
+  );
+}
+function chip(label, variant = '') {
+  return el('span', { class: 'chip ' + variant }, label);
+}
+
+/* ============================================================
+   ADMIN VIEWS
+   ============================================================ */
+function viewAdmin() {
+  const wrap = el('div');
+  if (App.detail) return renderAdminDetail(wrap);
+
+  const titles = {
+    home:        'Bada Seth · ' + Store.data.shop.name,
+    orders:      'Bulk orders',
+    contractors: 'Contractors',
+    designs:     'Designs & rates',
+    reports:     'Reports'
+  };
+  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || ''));
+
+  if (App.tab === 'home')        adminHome(wrap);
+  else if (App.tab === 'orders')      adminOrders(wrap);
+  else if (App.tab === 'contractors') adminContractors(wrap);
+  else if (App.tab === 'designs')     adminDesigns(wrap);
+  else if (App.tab === 'reports')     adminReports(wrap);
+  return wrap;
+}
+
+function renderAdminDetail(wrap) {
+  if (App.detail.type === 'order')      return adminOrderDetail(wrap);
+  if (App.detail.type === 'contractor') return adminContractorDetail(wrap);
+  if (App.detail.type === 'worker')     return workerDetailView(wrap, 'admin');
+  return wrap;
+}
+
+function adminHome(wrap) {
+  const orders = Domain.orders();
+  const inProgress = orders.filter(o => o.status === 'in_progress').length;
+  const totalLotQty = Store.data.lots.reduce((s, l) => s + l.qty, 0);
+  const totalDone = Store.data.production_entries.reduce((s, e) => s + e.pieces_done, 0);
+  const contractors = Domain.contractors();
+  const workers = Domain.workers();
+  const totalPaid = Store.data.payments
+    .filter(p => ['settlement','advance','bonus'].includes(p.type))
+    .reduce((s, p) => s + Number(p.amount), 0);
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Orders', orders.length, 'primary', () => goTab('orders')),
+    stat('In progress', inProgress, ''),
+    stat('Pieces done', totalDone, 'success'),
+    stat('Pieces in lots', totalLotQty),
+    stat('Contractors', contractors.length, 'accent', () => goTab('contractors')),
+    stat('Workers', workers.length, 'success'),
+    stat('Total paid', fmtINR(totalPaid), 'accent')
+  ));
+
+  wrap.appendChild(sectionH('Quick actions'));
+  wrap.appendChild(el('div', { class: 'card' },
+    el('div', { class: 'col' },
+      el('button', { class: 'btn full', onclick: () => openModal(addOrderForm()) }, '+ New bulk order'),
+      el('button', { class: 'btn secondary full', onclick: () => openModal(addUserForm({ role: 'contractor' })) }, '+ Add contractor'),
+      el('button', { class: 'btn secondary full', onclick: () => openModal(addDesignForm()) }, '+ Add design')
+    )
+  ));
+
+  if (orders.length > 0) {
+    wrap.appendChild(sectionH('Recent orders'));
+    orders.slice(-5).reverse().forEach(o => wrap.appendChild(orderListItem(o)));
+  }
+}
+
+function adminOrders(wrap) {
+  wrap.appendChild(sectionH('Bulk orders',
+    el('button', { class: 'btn sm', onclick: () => openModal(addOrderForm()) }, '+ New')
+  ));
+  const orders = Domain.orders().slice().reverse();
+  if (orders.length === 0) {
+    wrap.appendChild(emptyState('📋', 'No orders yet', '+ Create first order',
+      () => openModal(addOrderForm())));
+    return;
+  }
+  orders.forEach(o => wrap.appendChild(orderListItem(o)));
+}
+
+function orderListItem(o) {
+  const design = Domain.designById(o.design_id);
+  const prog = Domain.orderProgress(o.id);
+  return el('div', { class: 'list-item', onclick: () => goDetail('order', o.id) },
+    el('div', { class: 'avatar' }, '📦'),
+    el('div', { class: 'meta' },
+      el('div', { class: 'name' }, (design?.name || 'Unknown') + ' × ' + o.total_qty),
+      el('div', { class: 'sub' },
+        chip(o.status.replace('_', ' '), o.status), ' ',
+        o.deadline ? ' · due ' + fmtDate(o.deadline) : '',
+        ' · ' + prog.percent + '% done'
       )
+    ),
+    el('div', { class: 'end' }, '›')
+  );
+}
+
+function adminOrderDetail(wrap) {
+  const o = Domain.orderById(App.detail.id);
+  if (!o) { wrap.appendChild(emptyState('❓', 'Order not found', 'Back', goBack)); return wrap; }
+  const design = Domain.designById(o.design_id);
+  const prog = Domain.orderProgress(o.id);
+  const lots = Domain.lotsForOrder(o.id);
+
+  wrap.appendChild(topbar(design?.name || 'Order', '× ' + o.total_qty + ' · ' + chipText(o.status), { back: true }));
+
+  wrap.appendChild(el('div', { class: 'card' },
+    el('div', { class: 'row between' },
+      el('div', null,
+        el('div', { class: 'muted', style: 'font-size:12px' }, 'Progress'),
+        el('div', { style: 'font-size:22px;font-weight:800' }, prog.percent + '%'),
+        el('div', { class: 'muted' }, prog.done + ' / ' + prog.total + ' pieces')
+      ),
+      el('div', { style: 'text-align:right' },
+        el('div', { class: 'muted', style: 'font-size:12px' }, 'Deadline'),
+        el('div', { style: 'font-weight:600' }, o.deadline ? fmtDate(o.deadline) : '—')
+      )
+    ),
+    progressBar(prog.percent),
+    o.notes ? el('div', { class: 'muted', style: 'margin-top:8px' }, o.notes) : null
+  ));
+
+  wrap.appendChild(sectionH('Lots',
+    el('button', { class: 'btn sm', onclick: () => openModal(splitOrderForm(o.id)) }, '+ Split into lots')
+  ));
+  if (lots.length === 0) {
+    wrap.appendChild(emptyState('📦', 'No lots yet — split this order into lots first',
+      '+ Split into lots', () => openModal(splitOrderForm(o.id))));
+  } else {
+    lots.forEach(l => wrap.appendChild(lotListItem(l)));
+  }
+  return wrap;
+}
+
+function lotListItem(l) {
+  const prog = Domain.lotProgress(l.id);
+  const contractor = l.contractor_id ? Domain.userById(l.contractor_id) : null;
+  return el('div', { class: 'list-item', onclick: () => goDetail('lot', l.id) },
+    el('div', { class: 'avatar' }, 'L' + l.lot_no),
+    el('div', { class: 'meta' },
+      el('div', { class: 'name' }, 'Lot #' + l.lot_no + ' · ' + l.qty + ' pcs'),
+      el('div', { class: 'sub' },
+        chip(l.status.replace('_', ' '), l.status), ' ',
+        contractor ? ' · ' + contractor.name : ' · unassigned',
+        ' · ' + prog.percent + '%'
+      )
+    ),
+    el('div', { class: 'end' }, '›')
+  );
+}
+
+function adminContractors(wrap) {
+  wrap.appendChild(sectionH('Contractors',
+    el('button', { class: 'btn sm', onclick: () => openModal(addUserForm({ role: 'contractor' })) }, '+ Add')
+  ));
+  const list = Domain.contractors();
+  if (list.length === 0) {
+    wrap.appendChild(emptyState('👥', 'No contractors yet', '+ Add contractor',
+      () => openModal(addUserForm({ role: 'contractor' }))));
+    return;
+  }
+  list.forEach(c => wrap.appendChild(contractorListItem(c)));
+}
+
+function contractorListItem(c) {
+  const lots = Domain.lotsForContractor(c.id);
+  const workers = Domain.workersForContractor(c.id);
+  const balance = Domain.contractorBalanceToPay(c.id);
+  return el('div', { class: 'list-item', onclick: () => goDetail('contractor', c.id) },
+    el('div', { class: 'avatar' }, c.name.slice(0,1)),
+    el('div', { class: 'meta' },
+      el('div', { class: 'name' }, c.name),
+      el('div', { class: 'sub' },
+        lots.length + ' lots · ' + workers.length + ' workers · pay ' + fmtINR(balance)
+      )
+    ),
+    el('div', { class: 'end' }, '›')
+  );
+}
+
+function adminContractorDetail(wrap) {
+  const c = Domain.userById(App.detail.id);
+  if (!c) { wrap.appendChild(emptyState('❓', 'Contractor not found', 'Back', goBack)); return wrap; }
+  const lots = Domain.lotsForContractor(c.id);
+  const workers = Domain.workersForContractor(c.id);
+  const totalDone = Domain.assignmentsForContractor(c.id)
+    .reduce((s, a) => s + Domain.assignmentPiecesDone(a.id), 0);
+  const totalEarnedByWorkers = workers.reduce((s, w) => s + Domain.workerEarned(w.id), 0);
+  const balance = Domain.contractorBalanceToPay(c.id);
+
+  wrap.appendChild(topbar(c.name, c.mobile, { back: true }));
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Lots', lots.length, 'primary'),
+    stat('Workers', workers.length, 'success'),
+    stat('Pieces done', totalDone),
+    stat('Workers earned', fmtINR(totalEarnedByWorkers)),
+    stat('Pending pay-out', fmtINR(balance), 'accent')
+  ));
+
+  wrap.appendChild(sectionH('Lots'));
+  if (lots.length === 0) wrap.appendChild(emptyState('📦', 'No lots assigned'));
+  else lots.forEach(l => wrap.appendChild(lotListItem(l)));
+
+  wrap.appendChild(sectionH('Workers'));
+  if (workers.length === 0) wrap.appendChild(emptyState('👷', 'No workers under this contractor'));
+  else workers.forEach(w => wrap.appendChild(workerListItem(w, 'admin')));
+
+  return wrap;
+}
+
+function adminDesigns(wrap) {
+  wrap.appendChild(sectionH('Designs & rates',
+    el('button', { class: 'btn sm', onclick: () => openModal(addDesignForm()) }, '+ Add')
+  ));
+  const list = Domain.designs();
+  if (list.length === 0) {
+    wrap.appendChild(emptyState('🎨', 'No designs yet', '+ Add design', () => openModal(addDesignForm())));
+    return;
+  }
+  list.forEach(d => wrap.appendChild(designListItem(d)));
+}
+
+function designListItem(d) {
+  const pts = Domain.pieceTypesForDesign(d.id);
+  const totalRate = pts.reduce((s, p) => s + Number(p.default_rate), 0);
+  return el('div', { class: 'card' },
+    el('div', { class: 'row between' },
+      el('div', null,
+        el('div', { style: 'font-weight:700' }, d.name),
+        el('div', { class: 'muted' }, d.sku || '—')
+      ),
+      el('div', { style: 'text-align:right' },
+        el('div', { style: 'font-weight:700' }, fmtINR(totalRate)),
+        el('div', { class: 'muted', style: 'font-size:12px' }, 'all-in / piece')
+      )
+    ),
+    el('div', { class: 'muted', style: 'margin-top:8px;font-size:12px' },
+      pts.map(p => p.name + ' ₹' + p.default_rate).join(' · ')
     )
   );
 }
-function phase2Toast() {
-  toast('Coming in the next phase.', '');
+
+function adminReports(wrap) {
+  // Simple last-7-days aggregate
+  const from = Domain.weekStart();
+  const all = Store.data.production_entries.filter(e => e.date >= from);
+  const totalPieces = all.reduce((s, e) => s + e.pieces_done, 0);
+  const earned = all.reduce((s, e) => {
+    const a = Domain.assignmentById(e.assignment_id);
+    return s + (a ? e.pieces_done * a.rate : 0);
+  }, 0);
+
+  wrap.appendChild(sectionH('Last 7 days'));
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Pieces', totalPieces, 'primary'),
+    stat('Production value', fmtINR(earned), 'accent'),
+    stat('Active workers', new Set(all.map(e => e.worker_id)).size, 'success'),
+    stat('Entries', all.length)
+  ));
+
+  // Per-contractor breakdown
+  wrap.appendChild(sectionH('By contractor (7 days)'));
+  const byContractor = {};
+  all.forEach(e => {
+    byContractor[e.contractor_id] = (byContractor[e.contractor_id] || 0) + e.pieces_done;
+  });
+  const rows = Object.entries(byContractor).sort((a, b) => b[1] - a[1]);
+  if (rows.length === 0) wrap.appendChild(emptyState('📊', 'No production this week'));
+  else rows.forEach(([cid, pieces]) => {
+    const c = Domain.userById(cid);
+    wrap.appendChild(el('div', { class: 'list-item', onclick: () => goDetail('contractor', cid) },
+      el('div', { class: 'avatar' }, (c?.name || '?').slice(0,1)),
+      el('div', { class: 'meta' },
+        el('div', { class: 'name' }, c?.name || 'Unknown'),
+        el('div', { class: 'sub' }, pieces + ' pieces this week')
+      ),
+      el('div', { class: 'end' }, '›')
+    ));
+  });
 }
+
+/* ============================================================
+   CONTRACTOR VIEWS
+   ============================================================ */
+function viewContractor() {
+  const wrap = el('div');
+  if (App.detail) return renderContractorDetail(wrap);
+
+  const titles = {
+    home: 'Chhota Seth · ' + App.user.name,
+    lots: 'My Lots',
+    workers: 'Workers',
+    payments: 'Payments'
+  };
+  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || ''));
+
+  if (App.tab === 'home')          contractorHome(wrap);
+  else if (App.tab === 'lots')     contractorLots(wrap);
+  else if (App.tab === 'workers')  contractorWorkers(wrap);
+  else if (App.tab === 'payments') contractorPayments(wrap);
+  return wrap;
+}
+
+function renderContractorDetail(wrap) {
+  if (App.detail.type === 'lot')    return contractorLotDetail(wrap);
+  if (App.detail.type === 'worker') return workerDetailView(wrap, 'contractor');
+  return wrap;
+}
+
+function contractorHome(wrap) {
+  const lots = Domain.lotsForContractor(App.user.id);
+  const workers = Domain.workersForContractor(App.user.id);
+  const todayEntries = Store.data.production_entries.filter(e => e.contractor_id === App.user.id && e.date === today());
+  const piecesToday = todayEntries.reduce((s, e) => s + e.pieces_done, 0);
+  const balance = Domain.contractorBalanceToPay(App.user.id);
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('My lots', lots.length, 'primary', () => goTab('lots')),
+    stat('Workers', workers.length, 'success', () => goTab('workers')),
+    stat('Pieces today', piecesToday, 'accent'),
+    stat('To pay workers', fmtINR(balance))
+  ));
+
+  wrap.appendChild(sectionH('Quick actions'));
+  wrap.appendChild(el('div', { class: 'card' },
+    el('div', { class: 'col' },
+      el('button', { class: 'btn full',
+        onclick: () => openModal(addUserForm({ role: 'worker', parent_user_id: App.user.id })) }, '+ Add worker'),
+      el('button', { class: 'btn secondary full',
+        onclick: () => {
+          if (lots.length === 0) { toast('No lots assigned to you yet', ''); return; }
+          openModal(assignWorkerForm(lots[0].id));
+        } }, '+ Assign work to worker')
+    )
+  ));
+
+  if (todayEntries.length > 0) {
+    wrap.appendChild(sectionH("Today's entries"));
+    todayEntries.slice().reverse().forEach(e => wrap.appendChild(productionEntryItem(e)));
+  }
+}
+
+function contractorLots(wrap) {
+  const lots = Domain.lotsForContractor(App.user.id);
+  if (lots.length === 0) {
+    wrap.appendChild(emptyState('📦', 'No lots assigned yet — admin needs to assign lots to you'));
+    return;
+  }
+  lots.forEach(l => wrap.appendChild(lotListItem(l)));
+}
+
+function contractorLotDetail(wrap) {
+  const l = Domain.lotById(App.detail.id);
+  if (!l) { wrap.appendChild(emptyState('❓', 'Lot not found', 'Back', goBack)); return wrap; }
+  const order = Domain.orderById(l.order_id);
+  const design = order ? Domain.designById(order.design_id) : null;
+  const prog = Domain.lotProgress(l.id);
+  const assigns = Domain.assignmentsForLot(l.id);
+
+  wrap.appendChild(topbar('Lot #' + l.lot_no, (design?.name || '') + ' · ' + l.qty + ' pcs', { back: true }));
+
+  wrap.appendChild(el('div', { class: 'card' },
+    el('div', { class: 'row between' },
+      el('div', null,
+        el('div', { class: 'muted', style: 'font-size:12px' }, 'Progress'),
+        el('div', { style: 'font-size:22px;font-weight:800' }, prog.percent + '%'),
+        el('div', { class: 'muted' }, prog.done + ' / ' + prog.total + ' pcs assigned')
+      ),
+      chip(l.status.replace('_', ' '), l.status)
+    ),
+    progressBar(prog.percent)
+  ));
+
+  wrap.appendChild(sectionH('Worker assignments',
+    App.user.role !== 'admin'
+      ? el('button', { class: 'btn sm', onclick: () => openModal(assignWorkerForm(l.id)) }, '+ Assign')
+      : null
+  ));
+  if (assigns.length === 0) {
+    wrap.appendChild(emptyState('👷', 'No work assigned yet',
+      App.user.role !== 'admin' ? '+ Assign worker' : null,
+      App.user.role !== 'admin' ? () => openModal(assignWorkerForm(l.id)) : null));
+  } else {
+    assigns.forEach(a => wrap.appendChild(assignmentListItem(a)));
+  }
+  return wrap;
+}
+
+function assignmentListItem(a) {
+  const worker = Domain.userById(a.worker_id);
+  const pt = Domain.pieceTypeById(a.piece_type_id);
+  const done = Domain.assignmentPiecesDone(a.id);
+  const earned = Domain.assignmentEarned(a.id);
+  const percent = a.qty_assigned > 0 ? Math.round(done * 100 / a.qty_assigned) : 0;
+
+  const item = el('div', { class: 'card' },
+    el('div', { class: 'row between' },
+      el('div', { style: 'flex:1; min-width:0' },
+        el('div', { style: 'font-weight:700' }, (worker?.name || 'Worker') + ' · ' + (pt?.name || 'Piece type')),
+        el('div', { class: 'muted', style: 'font-size:13px' },
+          done + ' / ' + a.qty_assigned + ' pcs · ₹' + a.rate + '/pc · earned ' + fmtINR(earned)
+        )
+      ),
+      chip(a.status.replace('_', ' '), a.status)
+    ),
+    progressBar(percent)
+  );
+
+  // Add log-production button for worker themselves OR contractor
+  if (App.user.role === 'worker' && a.worker_id === App.user.id && a.status !== 'completed') {
+    item.appendChild(el('button', {
+      class: 'btn sm full mt-12',
+      onclick: () => openModal(logProductionForm(a.id))
+    }, '+ Log pieces done'));
+  } else if (App.user.role === 'contractor' && a.contractor_id === App.user.id) {
+    item.appendChild(el('button', {
+      class: 'btn sm secondary full mt-12',
+      onclick: () => openModal(logProductionForm(a.id, { onBehalfOf: a.worker_id }))
+    }, 'Log on behalf of worker'));
+  }
+  return item;
+}
+
+function contractorWorkers(wrap) {
+  const ws = Domain.workersForContractor(App.user.id);
+  wrap.appendChild(sectionH('Workers',
+    el('button', { class: 'btn sm', onclick: () => openModal(addUserForm({ role: 'worker', parent_user_id: App.user.id })) }, '+ Add')
+  ));
+  if (ws.length === 0) {
+    wrap.appendChild(emptyState('👷', 'No workers yet', '+ Add worker',
+      () => openModal(addUserForm({ role: 'worker', parent_user_id: App.user.id }))));
+    return;
+  }
+  ws.forEach(w => wrap.appendChild(workerListItem(w, 'contractor')));
+}
+
+function workerListItem(w, viewerRole) {
+  const earned = Domain.workerEarned(w.id);
+  const paid = Domain.workerPaid(w.id);
+  const balance = earned - paid;
+  return el('div', { class: 'list-item', onclick: () => goDetail('worker', w.id) },
+    el('div', { class: 'avatar' }, w.name.slice(0,1)),
+    el('div', { class: 'meta' },
+      el('div', { class: 'name' }, w.name),
+      el('div', { class: 'sub' }, 'earned ' + fmtINR(earned) + ' · paid ' + fmtINR(paid) + ' · pending ' + fmtINR(balance))
+    ),
+    el('div', { class: 'end' }, '›')
+  );
+}
+
+function contractorPayments(wrap) {
+  const myPayments = Domain.paymentsByPayer(App.user.id);
+  wrap.appendChild(sectionH('Payments to workers'));
+  if (myPayments.length === 0) {
+    wrap.appendChild(emptyState('💸', 'No payments recorded yet'));
+    return;
+  }
+  myPayments.forEach(p => wrap.appendChild(paymentListItem(p)));
+}
+
+function paymentListItem(p) {
+  const payee = Domain.userById(p.payee_id);
+  return el('div', { class: 'list-item' },
+    el('div', { class: 'avatar' }, '💸'),
+    el('div', { class: 'meta' },
+      el('div', { class: 'name' }, fmtINR(p.amount) + ' → ' + (payee?.name || 'Worker')),
+      el('div', { class: 'sub' }, p.type + ' · ' + p.method + ' · ' + fmtRelDate(p.date) + (p.note ? ' · ' + p.note : ''))
+    )
+  );
+}
+
+/* Worker detail (used by both admin and contractor viewers) */
+function workerDetailView(wrap, viewerRole) {
+  const w = Domain.userById(App.detail.id);
+  if (!w) { wrap.appendChild(emptyState('❓', 'Worker not found', 'Back', goBack)); return wrap; }
+  const earned = Domain.workerEarned(w.id);
+  const paid = Domain.workerPaid(w.id);
+  const balance = earned - paid;
+  const assigns = Domain.assignmentsForWorker(w.id);
+  const recent = Domain.entriesForWorker(w.id, daysAgo(30)).slice(0, 20);
+
+  const action = viewerRole === 'contractor'
+    ? el('button', { class: 'icon-btn', title: 'Pay',
+        onclick: () => openModal(paymentForm({ payer_id: App.user.id, payee_id: w.id })) }, '💸')
+    : null;
+
+  wrap.appendChild(topbar(w.name, w.mobile, { back: true, action }));
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Earned', fmtINR(earned), 'primary'),
+    stat('Paid', fmtINR(paid), 'success'),
+    stat('Balance', fmtINR(balance), balance > 0 ? 'accent' : ''),
+    stat('Assignments', assigns.length)
+  ));
+
+  wrap.appendChild(sectionH('Assignments'));
+  if (assigns.length === 0) wrap.appendChild(emptyState('📋', 'No assignments yet'));
+  else assigns.forEach(a => wrap.appendChild(assignmentListItem(a)));
+
+  wrap.appendChild(sectionH('Recent production (30 days)'));
+  if (recent.length === 0) wrap.appendChild(emptyState('✂️', 'No production entries'));
+  else recent.forEach(e => wrap.appendChild(productionEntryItem(e)));
+
+  wrap.appendChild(sectionH('Payment history'));
+  const pays = Domain.paymentsByPayee(w.id);
+  if (pays.length === 0) wrap.appendChild(emptyState('💸', 'No payments yet'));
+  else pays.forEach(p => wrap.appendChild(paymentListItem(p)));
+
+  return wrap;
+}
+
+function productionEntryItem(e) {
+  const a = Domain.assignmentById(e.assignment_id);
+  const pt = a ? Domain.pieceTypeById(a.piece_type_id) : null;
+  const earned = a ? e.pieces_done * a.rate : 0;
+  return el('div', { class: 'list-item' },
+    el('div', { class: 'avatar' }, '✂️'),
+    el('div', { class: 'meta' },
+      el('div', { class: 'name' }, e.pieces_done + ' pcs · ' + (pt?.name || 'Piece')),
+      el('div', { class: 'sub' }, fmtRelDate(e.date) + ' · earned ' + fmtINR(earned) + (e.notes ? ' · ' + e.notes : ''))
+    )
+  );
+}
+
+/* ============================================================
+   WORKER VIEWS
+   ============================================================ */
+function viewWorker() {
+  const wrap = el('div');
+  const titles = { home: "Today's work", work: 'My Work', earnings: 'My Earnings' };
+  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || App.user.name));
+
+  if (App.tab === 'home')          workerHome(wrap);
+  else if (App.tab === 'work')     workerWork(wrap);
+  else if (App.tab === 'earnings') workerEarnings(wrap);
+  return wrap;
+}
+
+function workerHome(wrap) {
+  const myAssigns = Domain.assignmentsForWorker(App.user.id);
+  const activeAssigns = myAssigns.filter(a => a.status !== 'completed' && a.status !== 'cancelled');
+  const todayEntries = Domain.entriesForWorker(App.user.id, today(), today());
+  const piecesToday = todayEntries.reduce((s, e) => s + e.pieces_done, 0);
+  const earnedToday = todayEntries.reduce((s, e) => {
+    const a = Domain.assignmentById(e.assignment_id);
+    return s + (a ? e.pieces_done * a.rate : 0);
+  }, 0);
+  const weekEntries = Domain.entriesForWorker(App.user.id, Domain.weekStart());
+  const piecesWeek = weekEntries.reduce((s, e) => s + e.pieces_done, 0);
+  const earned = Domain.workerEarned(App.user.id);
+  const paid = Domain.workerPaid(App.user.id);
+  const balance = earned - paid;
+
+  wrap.appendChild(el('button', {
+    class: 'big-tap',
+    onclick: () => {
+      if (activeAssigns.length === 0) {
+        toast('No active work assigned. Ask your contractor.', '');
+        return;
+      }
+      openModal(logProductionForm(null, { workerId: App.user.id, defaultAssignmentId: activeAssigns[0].id }));
+    }
+  }, '+ Pieces done today'));
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Today', piecesToday + ' pcs', 'primary'),
+    stat('Earned today', fmtINR(earnedToday), 'accent'),
+    stat('This week', piecesWeek + ' pcs', 'success'),
+    stat('Balance to receive', fmtINR(balance), balance > 0 ? 'accent' : '')
+  ));
+
+  if (todayEntries.length > 0) {
+    wrap.appendChild(sectionH("Today's entries"));
+    todayEntries.slice().reverse().forEach(e => wrap.appendChild(productionEntryItem(e)));
+  }
+
+  if (activeAssigns.length > 0) {
+    wrap.appendChild(sectionH('Active work'));
+    activeAssigns.forEach(a => wrap.appendChild(assignmentListItem(a)));
+  }
+}
+
+function workerWork(wrap) {
+  const myAssigns = Domain.assignmentsForWorker(App.user.id);
+  if (myAssigns.length === 0) {
+    wrap.appendChild(emptyState('📋', 'No work assigned yet'));
+    return;
+  }
+  myAssigns.forEach(a => wrap.appendChild(assignmentListItem(a)));
+}
+
+function workerEarnings(wrap) {
+  const earned = Domain.workerEarned(App.user.id);
+  const paid = Domain.workerPaid(App.user.id);
+  const balance = earned - paid;
+  const weekEntries = Domain.entriesForWorker(App.user.id, Domain.weekStart());
+  const weekEarned = weekEntries.reduce((s, e) => {
+    const a = Domain.assignmentById(e.assignment_id);
+    return s + (a ? e.pieces_done * a.rate : 0);
+  }, 0);
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Total earned', fmtINR(earned), 'primary'),
+    stat('Paid', fmtINR(paid), 'success'),
+    stat('Balance', fmtINR(balance), balance > 0 ? 'accent' : ''),
+    stat('This week', fmtINR(weekEarned))
+  ));
+
+  wrap.appendChild(sectionH('Recent production (30 days)'));
+  const recent = Domain.entriesForWorker(App.user.id, daysAgo(30)).slice(0, 30);
+  if (recent.length === 0) wrap.appendChild(emptyState('✂️', 'No production entries yet'));
+  else recent.forEach(e => wrap.appendChild(productionEntryItem(e)));
+
+  wrap.appendChild(sectionH('Payments received'));
+  const pays = Domain.paymentsByPayee(App.user.id);
+  if (pays.length === 0) wrap.appendChild(emptyState('💸', 'No payments yet'));
+  else pays.forEach(p => wrap.appendChild(paymentListItem(p)));
+}
+
+/* ============================================================
+   MODALS / FORMS
+   ============================================================ */
+
+function modalShell(title, children) {
+  const wrap = el('div');
+  wrap.appendChild(el('h2', null, title));
+  children.forEach(c => {
+    if (c == null || c === false) return;
+    wrap.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return wrap;
+}
+
+function field(label, input, hint) {
+  return el('div', { class: 'field' },
+    el('label', null, label),
+    input,
+    hint ? el('div', { class: 'hint' }, hint) : null
+  );
+}
+
+function input(name, opts = {}) {
+  return el('input', Object.assign({ name, type: 'text' }, opts));
+}
+
+function selectField(name, options, opts = {}) {
+  const sel = el('select', Object.assign({ name }, opts));
+  options.forEach(o => sel.appendChild(el('option', { value: o.value, selected: o.selected ? true : null }, o.label)));
+  return sel;
+}
+
+function submitButtons(submitLabel = 'Save') {
+  return el('div', { class: 'row gap-12 mt-12' },
+    el('button', { type: 'button', class: 'btn secondary', 'data-close': true, style: 'flex:1' }, 'Cancel'),
+    el('button', { type: 'submit', class: 'btn', style: 'flex:2' }, submitLabel)
+  );
+}
+
+/* — Add design — */
+function addDesignForm() {
+  const form = el('form', {
+    onsubmit: (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const piece_types = [];
+      for (let i = 0; i < 5; i++) {
+        const n = fd.get('pt_name_' + i);
+        const r = fd.get('pt_rate_' + i);
+        if (n) piece_types.push({ name: n, rate: r });
+      }
+      try {
+        Domain.addDesign({
+          name: fd.get('name'), sku: fd.get('sku'),
+          default_rate: fd.get('default_rate'), piece_types
+        });
+        toast('Design added', 'success');
+        closeModal(); render();
+      } catch (err) { toast(err.message, 'error'); }
+    }
+  });
+  const ptRows = [];
+  for (let i = 0; i < 5; i++) {
+    ptRows.push(el('div', { class: 'row gap-12' },
+      input('pt_name_' + i, { placeholder: i === 0 ? 'e.g. Cutting' : 'Piece type', style: 'flex:2' }),
+      input('pt_rate_' + i, { type: 'number', placeholder: 'Rate ₹', step: '0.5', min: '0', style: 'flex:1' })
+    ));
+  }
+  form.appendChild(modalShell('Add design', [
+    field('Design name', input('name', { required: true, placeholder: 'e.g. Formal Shirt' })),
+    field('SKU (optional)', input('sku', { placeholder: 'e.g. SH-001' })),
+    field('All-in rate (optional)', input('default_rate', { type: 'number', placeholder: 'auto from piece-types', step: '0.5', min: '0' })),
+    el('div', { style: 'font-weight:600;margin:8px 0 4px' }, 'Piece-type rates (per piece)'),
+    ...ptRows,
+    submitButtons('Save design')
+  ]));
+  return form;
+}
+
+/* — Add user (contractor or worker) — */
+function addUserForm({ role, parent_user_id }) {
+  const form = el('form', {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      try {
+        await Domain.addUser({
+          name: fd.get('name'), mobile: fd.get('mobile'), role,
+          parent_user_id: parent_user_id || null,
+          password: fd.get('password') || '1234'
+        });
+        toast(role === 'contractor' ? 'Contractor added' : 'Worker added', 'success');
+        closeModal(); render();
+      } catch (err) { toast(err.message, 'error'); }
+    }
+  });
+  form.appendChild(modalShell('Add ' + role, [
+    field('Name', input('name', { required: true, placeholder: 'Full name' })),
+    field('Mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit' })),
+    field('Password', input('password', { type: 'text', placeholder: 'default 1234', value: '1234' }),
+      'They use this to log in. They can change it later.'),
+    submitButtons('Add ' + role)
+  ]));
+  return form;
+}
+
+/* — Add bulk order — */
+function addOrderForm() {
+  const designs = Domain.designs();
+  if (designs.length === 0) {
+    return modalShell('Add an order', [
+      el('div', { class: 'muted' }, 'Add a design first.'),
+      el('button', { class: 'btn full mt-12', onclick: () => { closeModal(); openModal(addDesignForm()); } }, '+ Add design')
+    ]);
+  }
+  const form = el('form', {
+    onsubmit: (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const order = Domain.addOrder({
+        design_id: fd.get('design_id'),
+        total_qty: fd.get('total_qty'),
+        deadline: fd.get('deadline') || null,
+        notes: fd.get('notes')
+      });
+      toast('Order created — split into lots next', 'success');
+      closeModal();
+      goDetail('order', order.id);
+    }
+  });
+  form.appendChild(modalShell('New bulk order', [
+    field('Design', selectField('design_id', designs.map(d => ({ value: d.id, label: d.name })), { required: true })),
+    field('Total quantity', input('total_qty', { type: 'number', required: true, min: 1, placeholder: 'e.g. 1000' })),
+    field('Deadline', input('deadline', { type: 'date' })),
+    field('Notes', el('textarea', { name: 'notes', rows: 2, placeholder: 'Wholesale customer, fabric ready, etc.' })),
+    submitButtons('Create order')
+  ]));
+  return form;
+}
+
+/* — Split order into lots — */
+function splitOrderForm(orderId) {
+  const order = Domain.orderById(orderId);
+  const existing = Domain.lotsForOrder(orderId);
+  const used = existing.reduce((s, l) => s + l.qty, 0);
+  const remaining = order.total_qty - used;
+
+  const form = el('form', {
+    onsubmit: (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const count = Number(fd.get('count'));
+      const qty = Number(fd.get('qty'));
+      if (count * qty > remaining) { toast('Exceeds remaining quantity', 'error'); return; }
+      Domain.splitOrderIntoLots(orderId, count, qty);
+      toast(count + ' lots created', 'success');
+      closeModal(); render();
+    }
+  });
+  form.appendChild(modalShell('Split into lots', [
+    el('div', { class: 'muted', style: 'margin-bottom:8px' },
+      'Total ' + order.total_qty + ' · already in lots: ' + used + ' · remaining: ' + remaining),
+    field('Number of lots', input('count', { type: 'number', required: true, min: 1, value: 1 })),
+    field('Pieces per lot', input('qty', { type: 'number', required: true, min: 1, value: Math.min(100, remaining) })),
+    submitButtons('Create lots')
+  ]));
+
+  // Add per-lot contractor assignment for existing unassigned lots
+  if (existing.some(l => !l.contractor_id)) {
+    form.appendChild(el('div', { style: 'margin-top:16px;padding-top:16px;border-top:1px solid var(--c-border)' },
+      el('div', { style: 'font-weight:600;margin-bottom:8px' }, 'Assign existing lots to contractors'),
+      ...existing.filter(l => !l.contractor_id).map(l => assignLotInline(l))
+    ));
+  }
+  return form;
+}
+
+function assignLotInline(lot) {
+  const contractors = Domain.contractors();
+  const sel = selectField('lot_' + lot.id, [{ value: '', label: '— pick contractor —' }]
+    .concat(contractors.map(c => ({ value: c.id, label: c.name }))));
+  sel.addEventListener('change', () => {
+    if (sel.value) {
+      Domain.assignLotToContractor(lot.id, sel.value);
+      toast('Lot ' + lot.lot_no + ' assigned', 'success');
+      closeModal(); render();
+    }
+  });
+  return el('div', { class: 'row gap-12 mb-12' },
+    el('div', { style: 'flex:1' }, 'Lot #' + lot.lot_no + ' (' + lot.qty + ')'),
+    el('div', { style: 'flex:2' }, sel)
+  );
+}
+
+/* — Assign work to a worker — */
+function assignWorkerForm(lotId) {
+  const lot = Domain.lotById(lotId);
+  const order = Domain.orderById(lot.order_id);
+  const design = Domain.designById(order.design_id);
+  const pieceTypes = Domain.pieceTypesForDesign(design.id);
+  const workers = App.user.role === 'contractor'
+    ? Domain.workersForContractor(App.user.id)
+    : Domain.workers();
+
+  if (workers.length === 0) {
+    return modalShell('Assign work', [
+      el('div', { class: 'muted' }, 'You need to add a worker first.'),
+      el('button', {
+        class: 'btn full mt-12',
+        onclick: () => {
+          closeModal();
+          openModal(addUserForm({ role: 'worker', parent_user_id: App.user.id }));
+        }
+      }, '+ Add worker')
+    ]);
+  }
+  if (pieceTypes.length === 0) {
+    return modalShell('Assign work', [
+      el('div', { class: 'muted' }, 'This design has no piece types defined.')
+    ]);
+  }
+
+  const form = el('form', {
+    onsubmit: (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const pt = Domain.pieceTypeById(fd.get('piece_type_id'));
+      Domain.addAssignment({
+        lot_id: lotId,
+        worker_id: fd.get('worker_id'),
+        contractor_id: lot.contractor_id || App.user.id,
+        piece_type_id: fd.get('piece_type_id'),
+        qty_assigned: fd.get('qty_assigned'),
+        rate: fd.get('rate') || pt.default_rate
+      });
+      toast('Work assigned', 'success');
+      closeModal(); render();
+    }
+  });
+
+  // Update rate when piece type changes
+  const ptSelect = selectField('piece_type_id',
+    pieceTypes.map(p => ({ value: p.id, label: p.name + ' (₹' + p.default_rate + ')' })),
+    { required: true });
+
+  const rateInput = input('rate', { type: 'number', step: '0.5', min: '0', value: pieceTypes[0].default_rate });
+  ptSelect.addEventListener('change', () => {
+    const pt = Domain.pieceTypeById(ptSelect.value);
+    if (pt) rateInput.value = pt.default_rate;
+  });
+
+  form.appendChild(modalShell('Assign work · Lot #' + lot.lot_no, [
+    el('div', { class: 'muted', style: 'margin-bottom:8px' }, design.name + ' · ' + lot.qty + ' pcs in this lot'),
+    field('Worker', selectField('worker_id', workers.map(w => ({ value: w.id, label: w.name })), { required: true })),
+    field('Piece type', ptSelect),
+    field('Quantity', input('qty_assigned', { type: 'number', required: true, min: 1, value: lot.qty })),
+    field('Rate per piece (₹)', rateInput),
+    submitButtons('Assign')
+  ]));
+  return form;
+}
+
+/* — Log production (daily entry) — */
+function logProductionForm(assignmentId, opts = {}) {
+  const myAssigns = opts.workerId
+    ? Domain.assignmentsForWorker(opts.workerId).filter(a => a.status !== 'completed' && a.status !== 'cancelled')
+    : null;
+
+  const form = el('form', {
+    onsubmit: (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      try {
+        Domain.addProductionEntry({
+          assignment_id: assignmentId || fd.get('assignment_id'),
+          pieces_done: fd.get('pieces_done'),
+          date: fd.get('date'),
+          notes: fd.get('notes')
+        });
+        toast('Production logged', 'success');
+        closeModal(); render();
+      } catch (err) { toast(err.message, 'error'); }
+    }
+  });
+
+  let assignmentField = null;
+  if (!assignmentId && myAssigns && myAssigns.length > 0) {
+    assignmentField = field('Which work?', selectField('assignment_id',
+      myAssigns.map(a => {
+        const pt = Domain.pieceTypeById(a.piece_type_id);
+        const lot = Domain.lotById(a.lot_id);
+        return { value: a.id, label: (pt?.name || '?') + ' · Lot #' + (lot?.lot_no || '?') + ' · ' + a.qty_assigned + ' pcs',
+          selected: a.id === opts.defaultAssignmentId };
+      }),
+      { required: true }
+    ));
+  }
+
+  let context = null;
+  if (assignmentId) {
+    const a = Domain.assignmentById(assignmentId);
+    const pt = Domain.pieceTypeById(a.piece_type_id);
+    const lot = Domain.lotById(a.lot_id);
+    const done = Domain.assignmentPiecesDone(assignmentId);
+    context = el('div', { class: 'muted', style: 'margin-bottom:8px' },
+      (pt?.name || '?') + ' · Lot #' + (lot?.lot_no || '?') + ' · ' +
+      done + ' / ' + a.qty_assigned + ' done · ₹' + a.rate + '/pc');
+  }
+
+  form.appendChild(modalShell('Log production', [
+    context,
+    assignmentField,
+    field('Pieces done', input('pieces_done', { type: 'number', required: true, min: 1, placeholder: 'How many today' })),
+    field('Date', input('date', { type: 'date', value: today() })),
+    field('Notes (optional)', el('textarea', { name: 'notes', rows: 2 })),
+    submitButtons('Log pieces')
+  ]));
+  return form;
+}
+
+/* — Pay worker — */
+function paymentForm({ payer_id, payee_id }) {
+  const payee = Domain.userById(payee_id);
+  const balance = Domain.workerBalance(payee_id);
+
+  const form = el('form', {
+    onsubmit: (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      Domain.addPayment({
+        payer_id, payee_id,
+        amount: fd.get('amount'),
+        type: fd.get('type'),
+        method: fd.get('method'),
+        date: fd.get('date'),
+        note: fd.get('note')
+      });
+      toast('Payment recorded', 'success');
+      closeModal(); render();
+    }
+  });
+  form.appendChild(modalShell('Pay ' + (payee?.name || 'worker'), [
+    el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Pending balance: ' + fmtINR(balance)),
+    field('Amount (₹)', input('amount', { type: 'number', required: true, min: 1, step: '1',
+      value: Math.max(0, Math.round(balance)) })),
+    field('Type', selectField('type', [
+      { value: 'settlement', label: 'Settlement (against work done)' },
+      { value: 'advance', label: 'Advance' },
+      { value: 'bonus', label: 'Bonus' },
+      { value: 'adjustment', label: 'Adjustment' }
+    ], { required: true })),
+    field('Method', selectField('method', [
+      { value: 'cash', label: 'Cash' },
+      { value: 'upi', label: 'UPI' },
+      { value: 'bank', label: 'Bank transfer' },
+      { value: 'other', label: 'Other' }
+    ])),
+    field('Date', input('date', { type: 'date', value: today() })),
+    field('Note', el('textarea', { name: 'note', rows: 2, placeholder: 'Optional' })),
+    submitButtons('Record payment')
+  ]));
+  return form;
+}
+
+/* helpers */
+function chipText(s) { return (s || '').replace('_', ' '); }
 
 /* ─── Bootstrap ───────────────────────────────────────────── */
 async function bootstrap() {
@@ -515,12 +1705,13 @@ async function bootstrap() {
   App.user = Auth.current();
   App.route = App.user ? App.user.role : 'login';
   App.tab = 'home';
+  App.detail = null;
   render();
 }
-
 document.addEventListener('DOMContentLoaded', bootstrap);
 
-// Expose for debugging in console
-window.KarkhanaPro = { Store, Auth, App, navigate, render };
+window.KarkhanaPro = { Store, Auth, Domain, App, navigate, render, goTab, goDetail, goBack,
+  openModal, closeModal, logProductionForm, addOrderForm, addDesignForm, addUserForm,
+  splitOrderForm, assignWorkerForm, paymentForm };
 
 })();

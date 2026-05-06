@@ -1,11 +1,11 @@
 // KarkhanaPro service worker — minimal cache for app shell.
-const CACHE = 'karkhanapro-v3';
+const CACHE = 'karkhanapro-v5';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=3',
-  './app.js?v=3',
-  './supabase-config.js?v=3',
+  './styles.css?v=4',
+  './app.js?v=4',
+  './supabase-config.js?v=4',
   './manifest.webmanifest'
 ];
 
