@@ -1,4 +1,4 @@
--- KarkhanaPro — Postgres schema + RLS (public schema).
+-- DarziMate — Postgres schema + RLS (public schema).
 -- Idempotent — safe to re-run.
 --
 -- Roles: 'admin' (Bada Seth), 'contractor' (Chhota Seth), 'worker' (Darzi).

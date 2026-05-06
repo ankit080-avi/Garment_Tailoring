@@ -1,7 +1,7 @@
 {
-  "name": "karkhanapro-capacitor",
+  "name": "darzimate-capacitor",
   "version": "1.0.0",
-  "description": "KarkhanaPro APK shell — loads the live GitHub Pages PWA",
+  "description": "DarziMate APK shell — loads the live GitHub Pages PWA",
   "type": "commonjs",
   "license": "ISC",
   "dependencies": {

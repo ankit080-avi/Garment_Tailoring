@@ -1,5 +1,5 @@
 /* ====================================================================
-   KarkhanaPro — Tailoring Production Manager
+   DarziMate — Tailoring Production Manager
    Phase 1+2+3: Auth, drill-downs, daily production tracking,
    piece-rate earnings, payments. Multi-role: admin / contractor / worker.
 
@@ -10,7 +10,7 @@
 'use strict';
 
 /* ─── Supabase client (optional) ──────────────────────────── */
-const cfg = window.KARKHANA_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public', SOFTWARE_ADMIN_MOBILE: '' };
+const cfg = window.DARZIMATE_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public', SOFTWARE_ADMIN_MOBILE: '' };
 const SCHEMA = cfg.SCHEMA || 'public';
 const SOFTWARE_ADMIN_MOBILE = (cfg.SOFTWARE_ADMIN_MOBILE || '').trim();
 let sb = null;
@@ -102,7 +102,7 @@ document.addEventListener('click', (e) => {
 
 /* ─── Store ───────────────────────────────────────────────── */
 const Store = {
-  KEY: 'karkhanapro-v1',
+  KEY: 'darzimate-v1',
   data: null,
   remoteReady: false,
 
@@ -861,7 +861,7 @@ function viewLogin() {
   const wrap = el('div');
   wrap.appendChild(el('div', { class: 'login-hero' },
     el('div', { class: 'logo' }, '✂️'),
-    el('h1', null, 'KarkhanaPro'),
+    el('h1', null, 'DarziMate'),
     el('div', { class: 'tagline' }, 'Tailoring production manager')
   ));
 
@@ -1134,7 +1134,7 @@ function viewPendingApproval() {
     el('div', { style: 'font-size:64px;margin-bottom:8px' }, '⏳'),
     el('h2', null, 'Waiting for software admin approval'),
     el('p', { class: 'muted', style: 'margin-bottom:16px' },
-      'Your karkhana application has been received. Once the software admin approves, you can start using KarkhanaPro.'),
+      'Your karkhana application has been received. Once the software admin approves, you can start using DarziMate.'),
     el('div', { class: 'card', style: 'background: var(--c-primary-50);border-color:transparent;text-align:left' },
       el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:4px' }, 'Karkhana'),
       el('div', { style: 'font-weight:700' }, myShop?.name || '—'),
@@ -1175,7 +1175,7 @@ function viewSoftwareAdmin() {
     karkhanas:  'All karkhanas',
     reports:    'Reports'
   };
-  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || ''));
+  wrap.appendChild(topbar('DarziMate', titles[App.tab] || ''));
 
   if (App.tab === 'home')           softwareAdminHome(wrap);
   else if (App.tab === 'pending')   softwareAdminPending(wrap);
@@ -1422,7 +1422,7 @@ function viewAdmin() {
     designs:     'Designs & rates',
     reports:     'Reports'
   };
-  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || ''));
+  wrap.appendChild(topbar('DarziMate', titles[App.tab] || ''));
 
   if (App.tab === 'home')        adminHome(wrap);
   else if (App.tab === 'orders')      adminOrders(wrap);
@@ -1734,7 +1734,7 @@ function viewContractor() {
     admins: 'Bada Seths',
     payments: 'Payments'
   };
-  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || ''));
+  wrap.appendChild(topbar('DarziMate', titles[App.tab] || ''));
 
   if (App.tab === 'home')          contractorHome(wrap);
   else if (App.tab === 'lots')     contractorLots(wrap);
@@ -1996,7 +1996,7 @@ function productionEntryItem(e) {
 function viewWorker() {
   const wrap = el('div');
   const titles = { home: "Today's work", work: 'My Work', earnings: 'My Earnings' };
-  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || App.user.name));
+  wrap.appendChild(topbar('DarziMate', titles[App.tab] || App.user.name));
 
   if (App.tab === 'home')          workerHome(wrap);
   else if (App.tab === 'work')     workerWork(wrap);
@@ -2200,7 +2200,7 @@ function addContractorForAdminForm() {
             try {
               Domain.linkAdminContractor(App.user.id, c.id);
               toast('Linked ' + c.name, 'success');
-              closeModal(); window.KarkhanaPro.render();
+              closeModal(); window.DarziMate.render();
             } catch (e) { toast(e.message, 'error'); }
           }},
             el('div', { class: 'avatar' }, c.name.slice(0,1)),
@@ -2220,7 +2220,7 @@ function addContractorForAdminForm() {
           try {
             const c = Domain.linkContractorByMobile(App.user.id, m);
             toast('Linked ' + c.name, 'success');
-            closeModal(); window.KarkhanaPro.render();
+            closeModal(); window.DarziMate.render();
           } catch (err) { toast(err.message, 'error'); }
         }
       });
@@ -2240,7 +2240,7 @@ function addContractorForAdminForm() {
               adminId: App.user.id, notes: fd.get('notes')
             });
             toast('Contractor created and linked', 'success');
-            closeModal(); window.KarkhanaPro.render();
+            closeModal(); window.DarziMate.render();
           } catch (err) { toast(err.message, 'error'); }
         }
       });
@@ -2571,7 +2571,7 @@ async function bootstrap() {
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
 
-window.KarkhanaPro = { Store, Auth, Domain, App, navigate, render, goTab, goDetail, goBack,
+window.DarziMate = { Store, Auth, Domain, App, navigate, render, goTab, goDetail, goBack,
   openModal, closeModal, logProductionForm, addOrderForm, addDesignForm, addUserForm,
   splitOrderForm, assignWorkerForm, paymentForm };
 

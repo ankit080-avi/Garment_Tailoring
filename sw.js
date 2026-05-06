@@ -1,11 +1,11 @@
-// KarkhanaPro service worker — minimal cache for app shell.
-const CACHE = 'karkhanapro-v10';
+// DarziMate service worker — minimal cache for app shell.
+const CACHE = 'darzimate-v11';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=4',
-  './app.js?v=4',
-  './supabase-config.js?v=4',
+  './styles.css?v=11',
+  './app.js?v=11',
+  './supabase-config.js?v=11',
   './manifest.webmanifest'
 ];
 

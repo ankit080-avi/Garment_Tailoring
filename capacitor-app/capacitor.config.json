@@ -1,6 +1,6 @@
 {
-  "appId": "com.karkhanapro.app",
-  "appName": "KarkhanaPro",
+  "appId": "com.darzimate.app",
+  "appName": "DarziMate",
   "webDir": "www",
   "server": {
     "url": "https://ankit080-avi.github.io/Garment_Tailoring",

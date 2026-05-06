@@ -1,4 +1,4 @@
-package com.karkhanapro.app;
+package com.darzimate.app;
 
 import com.getcapacitor.BridgeActivity;
 

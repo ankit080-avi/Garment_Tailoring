@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">KarkhanaPro</string>
-    <string name="title_activity_main">KarkhanaPro</string>
-    <string name="package_name">com.karkhanapro.app</string>
-    <string name="custom_url_scheme">com.karkhanapro.app</string>
+    <string name="app_name">DarziMate</string>
+    <string name="title_activity_main">DarziMate</string>
+    <string name="package_name">com.darzimate.app</string>
+    <string name="custom_url_scheme">com.darzimate.app</string>
 </resources>
