@@ -10,17 +10,18 @@
 'use strict';
 
 /* ─── Supabase client (optional) ──────────────────────────── */
-const cfg = window.KARKHANA_SUPABASE || { URL: '', KEY: '', SCHEMA: 'karkhana' };
-const SCHEMA = cfg.SCHEMA || 'karkhana';
+const cfg = window.KARKHANA_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public' };
+const SCHEMA = cfg.SCHEMA || 'public';
 let sb = null;
 const REMOTE_ENABLED = !!(cfg.URL && cfg.KEY && window.supabase && window.supabase.createClient);
 if (REMOTE_ENABLED) {
   try {
-    sb = window.supabase.createClient(cfg.URL, cfg.KEY, {
+    const opts = {
       auth: { persistSession: true, autoRefreshToken: true },
-      db:   { schema: SCHEMA },
       realtime: { params: { eventsPerSecond: 5 } }
-    });
+    };
+    if (SCHEMA && SCHEMA !== 'public') opts.db = { schema: SCHEMA };
+    sb = window.supabase.createClient(cfg.URL, cfg.KEY, opts);
   } catch (e) { console.warn('Supabase init failed', e); }
 }
 

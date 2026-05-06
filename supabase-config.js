@@ -1,12 +1,8 @@
-// KarkhanaPro — Supabase config
-// Shares the MilkMate Supabase project. KarkhanaPro lives in its own
-// Postgres schema `karkhana`, so its tables don't collide with MilkMate's.
-// (See supabase/schema.sql.)
-//
-// The `KEY` here is the publishable / anon key — public by design.
-// Real auth is enforced by Row-Level Security in the karkhana schema.
+// KarkhanaPro — Supabase config.
+// The KEY is the publishable / anon key — public by design, safe to commit.
+// Real auth is enforced by Row-Level Security policies in supabase/schema.sql.
 window.KARKHANA_SUPABASE = {
-  URL:    'https://kmauurezrgovucpbkekq.supabase.co',
-  KEY:    'sb_publishable_a3klASpmaN__EX38mCq9Ew_l_cUpUr3',
-  SCHEMA: 'karkhana'
+  URL:    'https://xeigvfmejmvkzhwbjozp.supabase.co',
+  KEY:    'sb_publishable_4DNG4hF3gZQFDEu8LW9IYQ_51aR2PaW',
+  SCHEMA: 'public'
 };
