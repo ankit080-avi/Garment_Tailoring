@@ -73,6 +73,51 @@ async function hashPassword(pw) {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/* ─── Theme + photo helpers ──────────────────────────────── */
+const THEMES = [
+  { key: 'default',  label: 'Light · indigo', preview: '#3730A3' },
+  { key: 'midnight', label: 'Midnight (dark)', preview: '#0F172A' },
+  { key: 'forest',   label: 'Forest',          preview: '#059669' },
+  { key: 'cream',    label: 'Cream',           preview: '#92400E' }
+];
+
+function applyTheme(name) {
+  const valid = THEMES.find(t => t.key === name);
+  const k = valid ? valid.key : 'default';
+  document.body.className = k === 'default' ? '' : 'theme-' + k;
+  try { localStorage.setItem('darzimate-theme', k); } catch {}
+}
+
+function getTheme() {
+  try { return localStorage.getItem('darzimate-theme') || 'default'; }
+  catch { return 'default'; }
+}
+
+// Resize an image File down to maxSize px (longest edge), JPEG-encode, return base64.
+function resizeImage(file, maxSize = 256) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxSize || h > maxSize) {
+          if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+          else       { w = Math.round(w * maxSize / h); h = maxSize; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => reject(new Error('Could not load image'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ─── Toast & Modal ───────────────────────────────────────── */
 function toast(msg, type = '') {
   const host = $('#toastHost');
@@ -1098,15 +1143,15 @@ function topbar(title, subtitle, opts = {}) {
     onclick: () => refreshApp()
   }, '⟳');
 
-  const right = opts.action || el('button', {
-      class: 'icon-btn', title: 'Logout', 'aria-label': 'Logout',
-      onclick: async () => {
-        if (!confirm('Sign out?')) return;
-        await Auth.signOut();
-        App.user = null; App.route = 'login'; App.detail = null;
-        render();
-      }
-    }, '⎋');
+  // Avatar/settings button — shows user photo if available, else gear icon.
+  const settingsBtn = el('button', {
+    class: 'icon-btn settings-btn' + (App.user?.photo ? ' has-photo' : ''),
+    title: 'Settings', 'aria-label': 'Settings',
+    style: App.user?.photo ? `background-image: url(${App.user.photo})` : '',
+    onclick: () => openModal(settingsModal())
+  }, App.user?.photo ? '' : '⚙');
+
+  const right = opts.action || settingsBtn;
   return el('div', { class: 'topbar' },
     left,
     el('div', { style: 'flex:1' },
@@ -2605,8 +2650,115 @@ function paymentForm({ payer_id, payee_id }) {
 /* helpers */
 function chipText(s) { return (s || '').replace('_', ' '); }
 
+/* ─── Settings modal ──────────────────────────────────────── */
+function settingsModal() {
+  const wrap = el('div');
+  wrap.appendChild(el('h2', null, 'Settings'));
+
+  const u = App.user;
+  if (!u) {
+    wrap.appendChild(el('div', { class: 'muted' }, 'Sign in first.'));
+    return wrap;
+  }
+
+  // ── Profile ──
+  const fileInput = el('input', { type: 'file', accept: 'image/*', style: 'display:none' });
+  fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const photo = await resizeImage(file, 256);
+      const me = Domain.userById(u.id);
+      if (me) me.photo = photo;
+      App.user.photo = photo;
+      Store.save();
+      // Also push immediately so the new photo lands across devices fast
+      if (sb) {
+        try { await sb.from('users').update({ photo }).eq('id', u.id); } catch {}
+      }
+      toast('Photo updated', 'success');
+      // Re-open to show it
+      closeModal();
+      openModal(settingsModal());
+    } catch (err) {
+      toast(err.message || 'Could not save photo', 'error');
+    }
+  });
+
+  const photoEl = el('div', {
+    class: 'avatar' + (u.photo ? ' has-photo' : ''),
+    style: 'width:80px;height:80px;font-size:34px;cursor:pointer;flex-shrink:0' +
+           (u.photo ? `;background-image:url(${u.photo})` : ''),
+    onclick: () => fileInput.click()
+  }, u.photo ? '' : (u.name?.[0] || '?').toUpperCase());
+
+  const profileCard = el('div', { class: 'card' },
+    el('div', { class: 'muted', style: 'font-size:12px;letter-spacing:.04em;margin-bottom:8px' }, 'PROFILE'),
+    el('div', { class: 'row gap-12', style: 'align-items:center' },
+      photoEl,
+      el('div', { style: 'flex:1;min-width:0' },
+        el('div', { style: 'font-weight:700;font-size:16px' }, u.name || '—'),
+        el('div', { class: 'muted' }, u.mobile || ''),
+        el('div', { class: 'muted', style: 'font-size:12px' }, 'Role: ' + (u.role || 'user').replace('_', ' ')),
+        el('button', {
+          class: 'btn ghost sm', style: 'padding:4px 0',
+          onclick: () => fileInput.click()
+        }, '📷  Change photo')
+      )
+    ),
+    fileInput
+  );
+  wrap.appendChild(profileCard);
+
+  // ── Theme picker ──
+  const current = getTheme();
+  const themeCard = el('div', { class: 'card' },
+    el('div', { class: 'muted', style: 'font-size:12px;letter-spacing:.04em;margin-bottom:8px' }, 'THEME'),
+    el('div', { class: 'col' },
+      ...THEMES.map(t => el('button', {
+        type: 'button',
+        class: 'list-item' + (current === t.key ? '' : ''),
+        style: 'cursor:pointer' + (current === t.key ? ';border-color:var(--c-primary);background:var(--c-primary-50)' : ''),
+        onclick: () => {
+          applyTheme(t.key);
+          closeModal();
+          openModal(settingsModal());
+          toast('Theme: ' + t.label, 'success');
+        }
+      },
+        el('div', {
+          class: 'avatar',
+          style: 'background:' + t.preview + ';color:#fff'
+        }, current === t.key ? '✓' : ''),
+        el('div', { class: 'meta' },
+          el('div', { class: 'name' }, t.label)
+        )
+      ))
+    )
+  );
+  wrap.appendChild(themeCard);
+
+  // ── Sign out ──
+  wrap.appendChild(el('button', {
+    class: 'btn full danger mt-12',
+    onclick: async () => {
+      if (!confirm('Sign out?')) return;
+      await Auth.signOut();
+      App.user = null; App.route = 'login'; App.detail = null;
+      closeModal();
+      render();
+    }
+  }, 'Sign out'));
+
+  // ── About ──
+  wrap.appendChild(el('div', { class: 'muted', style: 'text-align:center;font-size:12px;margin-top:16px' },
+    'DarziMate · v1'));
+  return wrap;
+}
+
 /* ─── Bootstrap ───────────────────────────────────────────── */
 async function bootstrap() {
+  applyTheme(getTheme());
   await Store.load();   // cache → remote (if session)
 
   // If Supabase is configured and there's a stale local session without a

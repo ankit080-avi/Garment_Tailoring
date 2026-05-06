@@ -33,6 +33,69 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
+/* ─── Themes (apply via body.theme-NAME) ─── */
+body.theme-midnight {
+  --c-primary: #818CF8;
+  --c-primary-600: #6366F1;
+  --c-primary-50: #312E81;
+  --c-accent: #FBBF24;
+  --c-accent-50: #422006;
+  --c-bg: #0F172A;
+  --c-surface: #1E293B;
+  --c-border: #334155;
+  --c-text: #F1F5F9;
+  --c-muted: #94A3B8;
+  --c-success: #34D399;
+  --c-success-50: #064E3B;
+  --c-danger: #F87171;
+  --c-danger-50: #450A0A;
+  --c-warning: #FBBF24;
+  --c-warning-50: #422006;
+}
+body.theme-midnight .field input,
+body.theme-midnight .field select,
+body.theme-midnight .field textarea {
+  background: var(--c-surface);
+  color: var(--c-text);
+  border-color: var(--c-border);
+}
+body.theme-midnight .stat,
+body.theme-midnight .list-item,
+body.theme-midnight .card,
+body.theme-midnight .modal-sheet,
+body.theme-midnight .tabbar {
+  background: var(--c-surface);
+  border-color: var(--c-border);
+}
+
+body.theme-forest {
+  --c-primary: #059669;
+  --c-primary-600: #047857;
+  --c-primary-50: #D1FAE5;
+  --c-accent: #B45309;
+  --c-accent-50: #FEF3C7;
+}
+
+body.theme-cream {
+  --c-primary: #92400E;
+  --c-primary-600: #78350F;
+  --c-primary-50: #FEF3C7;
+  --c-accent: #DB2777;
+  --c-bg: #FFFBEB;
+}
+
+/* ─── Photo avatar (overrides initials) ─── */
+.avatar.has-photo {
+  background-size: cover;
+  background-position: center;
+  color: transparent;
+}
+.icon-btn.has-photo {
+  background-size: cover;
+  background-position: center;
+  color: transparent;
+}
+
 html, body {
   margin: 0; padding: 0;
   background: var(--c-bg);
