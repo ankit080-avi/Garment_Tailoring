@@ -94,22 +94,37 @@ body.theme-cream {
   top: env(safe-area-inset-top, 0px);
   left: 50%;
   transform: translateX(-50%) translateY(-60px);
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.18);
   display: grid;
   place-items: center;
   font-size: 22px;
   z-index: 9999;
   pointer-events: none;
-  transition: transform 0.2s ease;
+  opacity: 0;
 }
-.ptr-indicator.visible { /* set by JS based on pull amount */ }
-.ptr-indicator.spinning { animation: ptr-spin 0.7s linear infinite; }
-@keyframes ptr-spin { to { transform: translateX(-50%) translateY(40px) rotate(360deg); } }
+.ptr-indicator .arrow {
+  display: inline-block;
+  transition: transform 0.18s ease, color 0.18s ease;
+  color: var(--c-muted);
+}
+.ptr-indicator.ready .arrow {
+  transform: rotate(180deg);
+  color: var(--c-primary);
+}
+.ptr-indicator.ready {
+  border-color: var(--c-primary);
+  background: var(--c-primary-50);
+}
+.ptr-indicator.spinning .arrow {
+  animation: ptr-spin 0.7s linear infinite;
+  color: var(--c-primary);
+}
+@keyframes ptr-spin { to { transform: rotate(360deg); } }
 
 /* ─── Photo avatar (overrides initials) ─── */
 .avatar.has-photo {
@@ -172,14 +187,24 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 8px;
-  /* Extend up to cover the device status bar in APK / standalone PWA */
-  margin: calc(-16px - env(safe-area-inset-top, 0px)) -16px 16px -16px;
-  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px;
+  margin: -16px -16px 16px -16px;
+  padding: 14px 16px;
   background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-600) 100%);
   color: #fff;
   position: sticky;
   top: 0;
   z-index: 5;
+}
+/* Extend the topbar's gradient up into the device status bar (APK / standalone PWA)
+   without changing the topbar's flow box, so dashboard cards aren't clipped. */
+.topbar::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: calc(-1 * env(safe-area-inset-top, 0px));
+  height: env(safe-area-inset-top, 0px);
+  background: var(--c-primary);
+  pointer-events: none;
 }
 .topbar h1, .topbar h2 { color: #fff; margin: 0; }
 .topbar .sub { color: rgba(255,255,255,0.85); font-size: 12px; }
@@ -206,7 +231,7 @@ button { font-family: inherit; }
   padding: var(--pad);
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--c-border);
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .card-row {
@@ -459,11 +484,25 @@ button { font-family: inherit; }
 .stat {
   background: var(--c-surface);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 12px 14px;
   border: 1px solid var(--c-border);
 }
-.stat .label { color: var(--c-muted); font-size: 12px; font-weight: 600; }
-.stat .value { font-size: 24px; font-weight: 800; color: var(--c-text); margin-top: 4px; font-family: 'Plus Jakarta Sans', sans-serif; }
+.stat .label {
+  color: var(--c-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.stat .value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--c-text);
+  margin-top: 4px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
 .stat.accent .value { color: var(--c-accent); }
 .stat.primary .value { color: var(--c-primary); }
 .stat.success .value { color: var(--c-success); }
@@ -472,16 +511,16 @@ button { font-family: inherit; }
 .list-item {
   background: var(--c-surface);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 12px 14px;
   margin-bottom: 8px;
   border: 1px solid var(--c-border);
   display: flex;
   align-items: center;
   gap: 12px;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.12s, border-color 0.12s;
 }
-.list-item:hover { background: var(--c-primary-50); }
+.list-item:hover { background: var(--c-primary-50); border-color: var(--c-primary-50); }
 .list-item .avatar {
   width: 40px; height: 40px;
   border-radius: 50%;
@@ -492,9 +531,22 @@ button { font-family: inherit; }
   flex-shrink: 0;
 }
 .list-item .meta { flex: 1; min-width: 0; }
-.list-item .meta .name { font-weight: 600; color: var(--c-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.list-item .meta .sub { color: var(--c-muted); font-size: 13px; }
-.list-item .end { text-align: right; font-size: 13px; }
+.list-item .meta .name {
+  font-weight: 600;
+  color: var(--c-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-item .meta .sub {
+  color: var(--c-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.list-item .end { text-align: right; font-size: 13px; color: var(--c-muted); }
 
 /* ─── Status chips ─── */
 .chip {
@@ -580,9 +632,14 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 16px 0 8px;
+  margin: 20px 0 10px;
+  padding: 0 2px;
 }
-.section-h h2 { margin: 0; }
+.section-h h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
 
 /* ─── Loading ─── */
 .spinner {

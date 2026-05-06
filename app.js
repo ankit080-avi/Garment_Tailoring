@@ -2822,26 +2822,34 @@ function settingsModal() {
 
 /* ─── Pull-to-refresh ─────────────────────────────────────── */
 function setupPullToRefresh() {
-  const THRESHOLD = 70;        // px to trigger refresh
-  const MAX = 110;             // max pull distance for the indicator
-  let startY = 0, currentY = 0, pulling = false, refreshing = false;
+  const THRESHOLD = 90;        // px of effective pull to trigger refresh
+  const MAX = 140;             // max pull distance shown
+  const REST_Y = 56;           // px below top edge when at rest (= ready spot)
+  let startY = 0, currentY = 0, pulling = false, refreshing = false, ready = false;
 
-  const indicator = el('div', { class: 'ptr-indicator', id: 'ptrIndicator' }, '⟳');
+  const indicator = el('div', { class: 'ptr-indicator', id: 'ptrIndicator' },
+    el('span', { class: 'arrow' }, '↓')
+  );
   document.body.appendChild(indicator);
 
   function setPull(y) {
     const clamped = Math.min(Math.max(y, 0), MAX);
-    indicator.style.transform =
-      `translateX(-50%) translateY(${clamped - 60}px) rotate(${clamped * 3}deg)`;
-    indicator.style.opacity = clamped > 0 ? '1' : '0';
+    // Slide the indicator down from -60 (hidden) to REST_Y (anchored)
+    const ty = -60 + Math.min(clamped, REST_Y + 16);
+    indicator.style.transform = `translateX(-50%) translateY(${ty}px)`;
+    indicator.style.opacity = clamped > 8 ? '1' : '0';
+    const wasReady = ready;
+    ready = clamped >= THRESHOLD;
+    if (ready !== wasReady) indicator.classList.toggle('ready', ready);
   }
 
   function reset() {
-    indicator.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+    indicator.style.transition = 'transform 0.22s ease, opacity 0.22s ease';
     indicator.style.transform = 'translateX(-50%) translateY(-60px)';
     indicator.style.opacity = '0';
-    indicator.classList.remove('spinning');
-    setTimeout(() => { indicator.style.transition = ''; }, 250);
+    indicator.classList.remove('ready', 'spinning');
+    ready = false;
+    setTimeout(() => { indicator.style.transition = ''; }, 260);
   }
 
   document.addEventListener('touchstart', (e) => {
@@ -2850,6 +2858,7 @@ function setupPullToRefresh() {
     startY = e.touches[0].clientY;
     currentY = startY;
     pulling = true;
+    indicator.style.transition = '';
   }, { passive: true });
 
   document.addEventListener('touchmove', (e) => {
@@ -2857,21 +2866,23 @@ function setupPullToRefresh() {
     currentY = e.touches[0].clientY;
     const dy = currentY - startY;
     if (dy <= 0) { pulling = false; setPull(0); return; }
-    // Show indicator with rubber-band damping
-    setPull(dy * 0.5);
+    // Rubber-band damping so it feels heavier the further you pull
+    setPull(dy * 0.55);
   }, { passive: true });
 
   document.addEventListener('touchend', async () => {
     if (!pulling || refreshing) { pulling = false; return; }
     pulling = false;
-    const dy = (currentY - startY) * 0.5;
+    const dy = (currentY - startY) * 0.55;
     if (dy >= THRESHOLD) {
       refreshing = true;
       indicator.classList.add('spinning');
-      indicator.style.transform = 'translateX(-50%) translateY(40px)';
+      indicator.classList.remove('ready');
+      indicator.style.transition = 'transform 0.22s ease';
+      indicator.style.transform = `translateX(-50%) translateY(${-60 + REST_Y}px)`;
       indicator.style.opacity = '1';
       try { await refreshApp(); } finally {
-        setTimeout(() => { refreshing = false; reset(); }, 300);
+        setTimeout(() => { refreshing = false; reset(); }, 350);
       }
     } else {
       reset();
