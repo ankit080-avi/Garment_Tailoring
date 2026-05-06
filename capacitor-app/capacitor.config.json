@@ -1,0 +1,25 @@
+{
+  "appId": "com.karkhanapro.app",
+  "appName": "KarkhanaPro",
+  "webDir": "www",
+  "server": {
+    "url": "https://ankit080-avi.github.io/Garment_Tailoring",
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "android": {
+    "backgroundColor": "#F9FAFB"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "launchAutoHide": true,
+      "launchFadeOutDuration": 250,
+      "backgroundColor": "#3730A3",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false,
+      "splashFullScreen": true,
+      "splashImmersive": false
+    }
+  }
+}
