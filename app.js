@@ -10,8 +10,9 @@
 'use strict';
 
 /* ─── Supabase client (optional) ──────────────────────────── */
-const cfg = window.KARKHANA_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public' };
+const cfg = window.KARKHANA_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public', SOFTWARE_ADMIN_MOBILE: '' };
 const SCHEMA = cfg.SCHEMA || 'public';
+const SOFTWARE_ADMIN_MOBILE = (cfg.SOFTWARE_ADMIN_MOBILE || '').trim();
 let sb = null;
 const REMOTE_ENABLED = !!(cfg.URL && cfg.KEY && window.supabase && window.supabase.createClient);
 if (REMOTE_ENABLED) {
@@ -432,6 +433,34 @@ const Domain = {
   /* Users */
   userById(id) { return Store.data.users.find(u => u.id === id); },
   admins() { return Store.data.users.filter(u => u.role === 'admin'); },
+  approvedAdmins() { return Store.data.users.filter(u => u.role === 'admin' && u.status === 'active'); },
+  pendingAdmins() { return Store.data.users.filter(u => u.role === 'admin' && u.status === 'pending'); },
+  rejectedAdmins() { return Store.data.users.filter(u => u.role === 'admin' && u.status === 'rejected'); },
+  isSoftwareAdmin(u) { return (u || App.user)?.role === 'software_admin'; },
+  isPending(u) {
+    const usr = u || App.user;
+    return usr?.role === 'admin' && usr?.status === 'pending';
+  },
+  async approveAdmin(adminId) {
+    const u = this.userById(adminId);
+    if (!u) throw new Error('Admin not found');
+    u.status = 'active';
+    if (sb) {
+      const { error } = await sb.from('users').update({ status: 'active' }).eq('id', adminId);
+      if (error) throw new Error(error.message);
+    }
+    Store.save();
+  },
+  async rejectAdmin(adminId, reason) {
+    const u = this.userById(adminId);
+    if (!u) throw new Error('Admin not found');
+    u.status = 'rejected';
+    if (sb) {
+      const { error } = await sb.from('users').update({ status: 'rejected' }).eq('id', adminId);
+      if (error) throw new Error(error.message);
+    }
+    Store.save();
+  },
   allContractors() { return Store.data.users.filter(u => u.role === 'contractor'); },
   workers() { return Store.data.users.filter(u => u.role === 'worker'); },
   workersForContractor(contractorId) {
@@ -618,20 +647,31 @@ const Auth = {
 
   async signUpAdmin({ name, mobile, password, shop_name }) {
     if (!sb) throw new Error('Supabase not configured');
-    const email = this.mobileToEmail(mobile);
+    const cleanMobile = String(mobile).trim();
+    const cleanName = String(name).trim();
+    const isPlatformAdmin = SOFTWARE_ADMIN_MOBILE && cleanMobile === SOFTWARE_ADMIN_MOBILE;
 
+    const email = this.mobileToEmail(cleanMobile);
     const { data, error } = await sb.auth.signUp({ email, password });
     if (error) throw new Error(prettyAuthError(error));
     if (!data.session) {
-      // If the project still has email confirmation on, signUp returns no session.
       throw new Error('Email confirmation is enabled. Disable it in Supabase Auth settings, then try again.');
     }
     const userId = data.user.id;
 
-    const shopId = uid('shop');
-    const cleanMobile = String(mobile).trim();
-    const cleanName = String(name).trim();
+    if (isPlatformAdmin) {
+      // Platform / software admin: no shop of their own, sees every karkhana.
+      const { error: e } = await sb.from('users').insert({
+        id: userId, shop_id: null, mobile: cleanMobile, name: cleanName,
+        role: 'software_admin', status: 'active'
+      });
+      if (e) throw new Error('Could not create profile: ' + e.message);
+      await Store.loadFromRemote();
+      return { userId, role: 'software_admin' };
+    }
 
+    // Regular Bada Seth: create shop + user row, status='pending' until approved.
+    const shopId = uid('shop');
     {
       const { error: e1 } = await sb.from('shops').insert({
         id: shopId, name: shop_name || (cleanName + "'s Karkhana"),
@@ -642,13 +682,13 @@ const Auth = {
     {
       const { error: e2 } = await sb.from('users').insert({
         id: userId, shop_id: shopId, mobile: cleanMobile, name: cleanName,
-        role: 'admin', status: 'active'
+        role: 'admin', status: 'pending'
       });
       if (e2) throw new Error('Could not create profile: ' + e2.message);
     }
 
     await Store.loadFromRemote();
-    return { userId, shopId };
+    return { userId, shopId, role: 'admin', status: 'pending' };
   },
 
   async signUpContractor({ name, mobile, password, admin_mobile }) {
@@ -756,7 +796,16 @@ function render() {
   }
   document.getElementById('app').classList.remove('no-tab');
 
-  if (App.user.role === 'admin')           view.appendChild(viewAdmin());
+  // Pending Bada Seth: locked out until software admin approves.
+  if (Domain.isPending(App.user)) {
+    document.getElementById('app').classList.add('no-tab');
+    tabbar.hidden = true;
+    view.appendChild(viewPendingApproval());
+    return;
+  }
+
+  if (App.user.role === 'software_admin') view.appendChild(viewSoftwareAdmin());
+  else if (App.user.role === 'admin')      view.appendChild(viewAdmin());
   else if (App.user.role === 'contractor') view.appendChild(viewContractor());
   else if (App.user.role === 'worker')     view.appendChild(viewWorker());
   else view.appendChild(el('div', { class: 'empty' }, 'Unknown role.'));
@@ -779,6 +828,12 @@ function render() {
 }
 
 function roleTabs(role) {
+  if (role === 'software_admin') return [
+    { key: 'home',       ico: '🏠', label: 'Home' },
+    { key: 'pending',    ico: '⏳', label: 'Pending' },
+    { key: 'karkhanas',  ico: '🏭', label: 'Karkhanas' },
+    { key: 'reports',    ico: '📊', label: 'Reports' }
+  ];
   if (role === 'admin') return [
     { key: 'home',        ico: '🏠', label: 'Home' },
     { key: 'orders',      ico: '📋', label: 'Orders' },
@@ -1064,6 +1119,293 @@ function progressBar(percent) {
 }
 function chip(label, variant = '') {
   return el('span', { class: 'chip ' + variant }, label);
+}
+
+/* ============================================================
+   PENDING APPROVAL — locked screen for new Bada Seth signups
+   ============================================================ */
+function viewPendingApproval() {
+  const wrap = el('div');
+  wrap.appendChild(topbar('Application submitted', App.user.name));
+
+  const myShop = Store.data.shops.find(s => s.id === App.user.shop_id);
+
+  wrap.appendChild(el('div', { class: 'card', style: 'text-align:center;padding:32px 16px' },
+    el('div', { style: 'font-size:64px;margin-bottom:8px' }, '⏳'),
+    el('h2', null, 'Waiting for software admin approval'),
+    el('p', { class: 'muted', style: 'margin-bottom:16px' },
+      'Your karkhana application has been received. Once the software admin approves, you can start using KarkhanaPro.'),
+    el('div', { class: 'card', style: 'background: var(--c-primary-50);border-color:transparent;text-align:left' },
+      el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:4px' }, 'Karkhana'),
+      el('div', { style: 'font-weight:700' }, myShop?.name || '—'),
+      el('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, 'Mobile'),
+      el('div', null, App.user.mobile)
+    ),
+    el('button', {
+      class: 'btn full mt-12',
+      onclick: async () => {
+        await Store.loadFromRemote();
+        const me = Store.data.users.find(u => u.id === App.user.id);
+        if (me && me.status === 'active') {
+          App.user = me;
+          App.tab = 'home';
+          toast('Approved! Welcome aboard.', 'success');
+          render();
+        } else if (me && me.status === 'rejected') {
+          toast('Your application was rejected. Contact the software admin.', 'error');
+        } else {
+          toast('Still waiting…', '');
+        }
+      }
+    }, 'Refresh status')
+  ));
+  return wrap;
+}
+
+/* ============================================================
+   SOFTWARE ADMIN VIEWS — sees every karkhana, approves new ones
+   ============================================================ */
+function viewSoftwareAdmin() {
+  const wrap = el('div');
+  if (App.detail) return renderSoftwareAdminDetail(wrap);
+
+  const titles = {
+    home:       'Software Admin',
+    pending:    'Pending applications',
+    karkhanas:  'All karkhanas',
+    reports:    'Reports'
+  };
+  wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || ''));
+
+  if (App.tab === 'home')           softwareAdminHome(wrap);
+  else if (App.tab === 'pending')   softwareAdminPending(wrap);
+  else if (App.tab === 'karkhanas') softwareAdminKarkhanas(wrap);
+  else if (App.tab === 'reports')   softwareAdminReports(wrap);
+  return wrap;
+}
+
+function renderSoftwareAdminDetail(wrap) {
+  if (App.detail.type === 'karkhana')   return softwareAdminKarkhanaDetail(wrap);
+  if (App.detail.type === 'contractor') return adminContractorDetail(wrap);
+  if (App.detail.type === 'worker')     return workerDetailView(wrap, 'admin');
+  return wrap;
+}
+
+function softwareAdminHome(wrap) {
+  const allShops = Store.data.shops;
+  const allAdmins = Domain.approvedAdmins();
+  const pendingCount = Domain.pendingAdmins().length;
+  const allWorkers = Domain.workers();
+  const allContractors = Domain.allContractors();
+  const totalProduction = Store.data.production_entries.reduce((s, e) => s + e.pieces_done, 0);
+  const totalPaid = Store.data.payments
+    .filter(p => ['settlement','advance','bonus'].includes(p.type))
+    .reduce((s, p) => s + Number(p.amount), 0);
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Karkhanas', allShops.length, 'primary', () => goTab('karkhanas')),
+    stat('Pending', pendingCount, pendingCount > 0 ? 'accent' : '', () => goTab('pending')),
+    stat('Contractors', allContractors.length),
+    stat('Workers', allWorkers.length, 'success'),
+    stat('Pieces produced', totalProduction),
+    stat('Total paid out', fmtINR(totalPaid), 'accent')
+  ));
+
+  if (pendingCount > 0) {
+    wrap.appendChild(el('div', { class: 'card',
+      style: 'background:var(--c-warning-50);border-color:transparent;cursor:pointer',
+      onclick: () => goTab('pending') },
+      el('div', { class: 'row gap-12' },
+        el('div', { style: 'font-size:24px' }, '⏳'),
+        el('div', { style: 'flex:1' },
+          el('div', { style: 'font-weight:700;color:var(--c-warning)' },
+            pendingCount + ' application' + (pendingCount === 1 ? '' : 's') + ' waiting'),
+          el('div', { class: 'muted' }, 'Tap to review and approve.')
+        ),
+        el('div', null, '›')
+      )
+    ));
+  }
+
+  wrap.appendChild(sectionH('Recent karkhanas'));
+  const recent = allShops.slice().reverse().slice(0, 5);
+  if (recent.length === 0) wrap.appendChild(emptyState('🏭', 'No karkhanas yet'));
+  else recent.forEach(s => wrap.appendChild(karkhanaListItem(s)));
+}
+
+function softwareAdminPending(wrap) {
+  const list = Domain.pendingAdmins();
+  if (list.length === 0) {
+    wrap.appendChild(emptyState('✅', 'No pending applications'));
+    return;
+  }
+  list.forEach(a => {
+    const shop = Store.data.shops.find(s => s.id === a.shop_id);
+    const card = el('div', { class: 'card' },
+      el('div', { class: 'row between' },
+        el('div', { style: 'flex:1;min-width:0' },
+          el('div', { style: 'font-weight:700' }, a.name),
+          el('div', { class: 'muted', style: 'font-size:13px' },
+            (shop?.name || '—') + ' · ' + a.mobile + ' · applied ' + fmtRelDate(a.created_at)
+          )
+        ),
+        chip('pending', 'open')
+      ),
+      el('div', { class: 'row gap-12 mt-12' },
+        el('button', {
+          class: 'btn', style: 'flex:2',
+          onclick: async () => {
+            try {
+              await Domain.approveAdmin(a.id);
+              toast(a.name + ' approved', 'success');
+              render();
+            } catch (e) { toast(e.message, 'error'); }
+          }
+        }, '✓ Approve'),
+        el('button', {
+          class: 'btn secondary danger', style: 'flex:1',
+          onclick: async () => {
+            if (!confirm('Reject ' + a.name + '?')) return;
+            try {
+              await Domain.rejectAdmin(a.id);
+              toast(a.name + ' rejected', '');
+              render();
+            } catch (e) { toast(e.message, 'error'); }
+          }
+        }, '✗ Reject')
+      )
+    );
+    wrap.appendChild(card);
+  });
+}
+
+function softwareAdminKarkhanas(wrap) {
+  const list = Store.data.shops;
+  if (list.length === 0) {
+    wrap.appendChild(emptyState('🏭', 'No karkhanas yet'));
+    return;
+  }
+  list.forEach(s => wrap.appendChild(karkhanaListItem(s)));
+}
+
+function karkhanaListItem(shop) {
+  const owner = Store.data.users.find(u => u.id === shop.owner_user_id);
+  const orders = Store.data.orders.filter(o => o.shop_id === shop.id);
+  const lots = Store.data.lots.filter(l => l.shop_id === shop.id);
+  const pieces = Store.data.production_entries.filter(e => {
+    const a = Store.data.worker_assignments.find(x => x.id === e.assignment_id);
+    const lot = a ? Store.data.lots.find(l => l.id === a.lot_id) : null;
+    return lot?.shop_id === shop.id;
+  }).reduce((s, e) => s + e.pieces_done, 0);
+
+  const statusChip = owner?.status === 'pending'
+    ? chip('pending', 'open')
+    : owner?.status === 'rejected'
+      ? chip('rejected', 'cancelled')
+      : chip('active', 'completed');
+
+  return el('div', { class: 'list-item', onclick: () => goDetail('karkhana', shop.id) },
+    el('div', { class: 'avatar' }, '🏭'),
+    el('div', { class: 'meta' },
+      el('div', { class: 'name' }, shop.name),
+      el('div', { class: 'sub' },
+        (owner?.name || '—') + ' · ' + orders.length + ' orders · ' + lots.length + ' lots · ' + pieces + ' pcs'
+      )
+    ),
+    el('div', { class: 'end' }, statusChip)
+  );
+}
+
+function softwareAdminKarkhanaDetail(wrap) {
+  const shop = Store.data.shops.find(s => s.id === App.detail.id);
+  if (!shop) { wrap.appendChild(emptyState('❓', 'Karkhana not found', 'Back', goBack)); return wrap; }
+  const owner = Store.data.users.find(u => u.id === shop.owner_user_id);
+  const orders = Store.data.orders.filter(o => o.shop_id === shop.id);
+  const lots = Store.data.lots.filter(l => l.shop_id === shop.id);
+  const contractors = Domain.allContractors().filter(c =>
+    Store.data.admin_contractors.some(ac => ac.contractor_id === c.id && ac.admin_id === shop.owner_user_id)
+  );
+  const workers = contractors.flatMap(c => Domain.workersForContractor(c.id));
+
+  wrap.appendChild(topbar(shop.name, owner?.name + ' · ' + (owner?.mobile || ''), { back: true }));
+
+  if (owner?.status === 'pending') {
+    wrap.appendChild(el('div', { class: 'card', style: 'background:var(--c-warning-50);border-color:transparent' },
+      el('div', { style: 'font-weight:700;color:var(--c-warning);margin-bottom:8px' }, 'Pending approval'),
+      el('div', { class: 'row gap-12' },
+        el('button', { class: 'btn', style: 'flex:2', onclick: async () => {
+          try { await Domain.approveAdmin(owner.id); toast('Approved', 'success'); render(); }
+          catch (e) { toast(e.message, 'error'); }
+        } }, '✓ Approve'),
+        el('button', { class: 'btn secondary danger', style: 'flex:1', onclick: async () => {
+          if (!confirm('Reject?')) return;
+          try { await Domain.rejectAdmin(owner.id); toast('Rejected', ''); render(); }
+          catch (e) { toast(e.message, 'error'); }
+        } }, '✗ Reject')
+      )
+    ));
+  }
+
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Orders', orders.length, 'primary'),
+    stat('Lots', lots.length),
+    stat('Contractors', contractors.length, 'accent'),
+    stat('Workers', workers.length, 'success')
+  ));
+
+  wrap.appendChild(sectionH('Contractors'));
+  if (contractors.length === 0) wrap.appendChild(emptyState('👥', 'No contractors linked'));
+  else contractors.forEach(c => wrap.appendChild(contractorListItem(c)));
+
+  wrap.appendChild(sectionH('Recent orders'));
+  if (orders.length === 0) wrap.appendChild(emptyState('📋', 'No orders yet'));
+  else orders.slice().reverse().slice(0, 10).forEach(o => wrap.appendChild(orderListItem(o)));
+
+  return wrap;
+}
+
+function softwareAdminReports(wrap) {
+  const from = Domain.weekStart();
+  const all = Store.data.production_entries.filter(e => e.date >= from);
+  const totalPieces = all.reduce((s, e) => s + e.pieces_done, 0);
+  const earned = all.reduce((s, e) => {
+    const a = Domain.assignmentById(e.assignment_id);
+    return s + (a ? e.pieces_done * a.rate : 0);
+  }, 0);
+
+  wrap.appendChild(sectionH('Last 7 days · all karkhanas'));
+  wrap.appendChild(el('div', { class: 'stats' },
+    stat('Pieces', totalPieces, 'primary'),
+    stat('Production value', fmtINR(earned), 'accent'),
+    stat('Active workers', new Set(all.map(e => e.worker_id)).size, 'success'),
+    stat('Active karkhanas', new Set(all.map(e => {
+      const a = Domain.assignmentById(e.assignment_id);
+      const lot = a ? Domain.lotById(a.lot_id) : null;
+      return lot?.shop_id;
+    }).filter(Boolean)).size)
+  ));
+
+  wrap.appendChild(sectionH('By karkhana (7 days)'));
+  const byShop = {};
+  all.forEach(e => {
+    const a = Domain.assignmentById(e.assignment_id);
+    const lot = a ? Domain.lotById(a.lot_id) : null;
+    if (!lot) return;
+    byShop[lot.shop_id] = (byShop[lot.shop_id] || 0) + e.pieces_done;
+  });
+  const rows = Object.entries(byShop).sort((a, b) => b[1] - a[1]);
+  if (rows.length === 0) wrap.appendChild(emptyState('📊', 'No production this week'));
+  else rows.forEach(([sid, pieces]) => {
+    const shop = Store.data.shops.find(s => s.id === sid);
+    wrap.appendChild(el('div', { class: 'list-item', onclick: () => goDetail('karkhana', sid) },
+      el('div', { class: 'avatar' }, '🏭'),
+      el('div', { class: 'meta' },
+        el('div', { class: 'name' }, shop?.name || 'Unknown'),
+        el('div', { class: 'sub' }, pieces + ' pieces this week')
+      ),
+      el('div', { class: 'end' }, '›')
+    ));
+  });
 }
 
 /* ============================================================

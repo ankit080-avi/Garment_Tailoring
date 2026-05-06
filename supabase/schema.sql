@@ -23,14 +23,22 @@ create table if not exists users (
   shop_id         text references shops(id) on delete cascade,
   mobile          text not null,
   name            text not null,
-  role            text not null check (role in ('admin','contractor','worker')),
+  role            text not null,
   password_hash   text,
   parent_user_id  text references users(id) on delete set null,
   photo           text,
-  status          text default 'active' check (status in ('active','disabled','pending')),
+  status          text default 'active',
   created_at      timestamptz not null default now(),
   unique (shop_id, mobile)
 );
+
+-- Tighten role + status checks (idempotent — drop old then add new).
+alter table users drop constraint if exists users_role_check;
+alter table users add  constraint users_role_check
+  check (role in ('software_admin','admin','contractor','worker'));
+alter table users drop constraint if exists users_status_check;
+alter table users add  constraint users_status_check
+  check (status in ('active','disabled','pending','rejected'));
 
 -- Many-to-many: an admin (Bada Seth) can have many contractors (Chhota Seth);
 -- a contractor can work for many admins.
@@ -183,6 +191,23 @@ set search_path = public, pg_temp as $$
   select shop_id from users where id = auth.uid()::text limit 1
 $$;
 
+create or replace function is_software_admin() returns boolean
+language sql stable security definer
+set search_path = public, pg_temp as $$
+  select coalesce((select role from users where id = auth.uid()::text limit 1) = 'software_admin', false)
+$$;
+
+-- Public RPC: lets the unauthenticated signup screen check whether the
+-- platform already has a software admin. Used to decide whether to
+-- promote the first signup. No personal data leaks.
+create or replace function has_software_admin() returns boolean
+language sql stable security definer
+set search_path = public, pg_temp as $$
+  select exists (select 1 from users where role = 'software_admin')
+$$;
+revoke all on function has_software_admin() from public;
+grant execute on function has_software_admin() to anon, authenticated;
+
 -- ============================================================
 -- 4. Enable Row-Level Security
 -- ============================================================
@@ -219,25 +244,26 @@ end $$;
 
 -- SHOPS
 create policy shops_select on shops for select
-  using (id = current_shop_id());
+  using (is_software_admin() or id = current_shop_id());
 create policy shops_self_insert on shops for insert
   with check (owner_user_id = auth.uid()::text);
 create policy shops_update on shops for update
-  using (id = current_shop_id() and current_role_in_shop() = 'admin');
+  using (
+    is_software_admin()
+    or (id = current_shop_id() and current_role_in_shop() = 'admin')
+  );
 
 -- USERS
 -- Self-signup: a freshly-authenticated user can create exactly their own row.
 create policy users_select on users for select
   using (
-    -- everyone in same shop, plus contractors a worker is under, plus admin always visible
-    shop_id = current_shop_id()
+    is_software_admin()
+    or shop_id = current_shop_id()
     or id = auth.uid()::text
     or (current_role_in_shop() = 'contractor' and parent_user_id = auth.uid()::text)
     or (current_role_in_shop() = 'worker' and id = (select parent_user_id from users where id = auth.uid()::text))
-    or role = 'admin'
     -- Look-up by mobile during signup: anyone can find an admin or contractor by mobile.
-    -- Required so contractor/worker signup can resolve the parent's id from their mobile.
-    or role in ('admin','contractor')
+    or role in ('admin','contractor','software_admin')
   );
 create policy users_self_insert on users for insert
   with check (id = auth.uid()::text);
@@ -245,77 +271,83 @@ create policy users_admin_insert on users for insert
   with check (current_role_in_shop() = 'admin');
 create policy users_update on users for update
   using (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or id = auth.uid()::text
     or (current_role_in_shop() = 'contractor' and parent_user_id = auth.uid()::text)
   );
 
 -- ADMIN_CONTRACTORS
 create policy ac_select on admin_contractors for select
-  using (admin_id = auth.uid()::text or contractor_id = auth.uid()::text);
--- Either side of the relationship can insert (contractor signs up + links to admin
--- by entering admin's mobile; or admin pre-links a contractor that signed up).
+  using (is_software_admin() or admin_id = auth.uid()::text or contractor_id = auth.uid()::text);
 create policy ac_self_insert on admin_contractors for insert
   with check (admin_id = auth.uid()::text or contractor_id = auth.uid()::text);
 create policy ac_admin_write on admin_contractors for all
-  using (admin_id = auth.uid()::text and current_role_in_shop() = 'admin')
-  with check (admin_id = auth.uid()::text and current_role_in_shop() = 'admin');
+  using (is_software_admin() or (admin_id = auth.uid()::text and current_role_in_shop() = 'admin'))
+  with check (is_software_admin() or (admin_id = auth.uid()::text and current_role_in_shop() = 'admin'));
 
 -- DESIGNS / PIECE_TYPES
-create policy designs_select on designs for select using (shop_id = current_shop_id());
+create policy designs_select on designs for select
+  using (is_software_admin() or shop_id = current_shop_id());
 create policy designs_admin_write on designs for all
-  using (shop_id = current_shop_id() and current_role_in_shop() = 'admin')
-  with check (shop_id = current_shop_id() and current_role_in_shop() = 'admin');
+  using (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'))
+  with check (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'));
 
-create policy piece_types_select on piece_types for select using (shop_id = current_shop_id());
+create policy piece_types_select on piece_types for select
+  using (is_software_admin() or shop_id = current_shop_id());
 create policy piece_types_admin_write on piece_types for all
-  using (shop_id = current_shop_id() and current_role_in_shop() = 'admin')
-  with check (shop_id = current_shop_id() and current_role_in_shop() = 'admin');
+  using (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'))
+  with check (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'));
 
 -- ORDERS
 create policy orders_select on orders for select
   using (
-    (current_role_in_shop() = 'admin' and shop_id = current_shop_id())
-    or
-    (current_role_in_shop() = 'contractor'
-      and exists (select 1 from lots l where l.order_id = orders.id and l.contractor_id = auth.uid()::text))
+    is_software_admin()
+    or (current_role_in_shop() = 'admin' and shop_id = current_shop_id())
+    or (current_role_in_shop() = 'contractor'
+        and exists (select 1 from lots l where l.order_id = orders.id and l.contractor_id = auth.uid()::text))
   );
 create policy orders_admin_write on orders for all
-  using (shop_id = current_shop_id() and current_role_in_shop() = 'admin')
-  with check (shop_id = current_shop_id() and current_role_in_shop() = 'admin');
+  using (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'))
+  with check (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'));
 
 -- LOTS
 create policy lots_select on lots for select
   using (
-    (current_role_in_shop() = 'admin' and shop_id = current_shop_id())
+    is_software_admin()
+    or (current_role_in_shop() = 'admin' and shop_id = current_shop_id())
     or contractor_id = auth.uid()::text
     or (current_role_in_shop() = 'worker'
         and exists (select 1 from worker_assignments wa where wa.lot_id = lots.id and wa.worker_id = auth.uid()::text))
   );
 create policy lots_admin_write on lots for all
-  using (shop_id = current_shop_id() and current_role_in_shop() = 'admin')
-  with check (shop_id = current_shop_id() and current_role_in_shop() = 'admin');
+  using (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'))
+  with check (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'));
 
 -- WORKER_ASSIGNMENTS
 create policy assignments_select on worker_assignments for select
   using (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or contractor_id = auth.uid()::text
     or worker_id = auth.uid()::text
   );
 create policy assignments_contractor_write on worker_assignments for all
   using (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or (current_role_in_shop() = 'contractor' and contractor_id = auth.uid()::text)
   ) with check (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or (current_role_in_shop() = 'contractor' and contractor_id = auth.uid()::text)
   );
 
 -- PRODUCTION_ENTRIES
 create policy prod_select on production_entries for select
   using (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or contractor_id = auth.uid()::text
     or worker_id = auth.uid()::text
   );
@@ -323,37 +355,42 @@ create policy prod_worker_insert on production_entries for insert
   with check (worker_id = auth.uid()::text);
 create policy prod_contractor_admin_update on production_entries for update
   using (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or (current_role_in_shop() = 'contractor' and contractor_id = auth.uid()::text)
   );
 
 -- PAYMENTS
 create policy pay_select on payments for select
   using (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or payer_id = auth.uid()::text
     or payee_id = auth.uid()::text
   );
 create policy pay_admin_contractor_write on payments for all
   using (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or (current_role_in_shop() = 'contractor' and payer_id = auth.uid()::text)
   ) with check (
-    current_role_in_shop() = 'admin'
+    is_software_admin()
+    or current_role_in_shop() = 'admin'
     or (current_role_in_shop() = 'contractor' and payer_id = auth.uid()::text)
   );
 
 -- NOTIFICATIONS
 create policy notif_select on notifications for select
-  using (user_id = auth.uid()::text);
+  using (is_software_admin() or user_id = auth.uid()::text);
 create policy notif_update on notifications for update
-  using (user_id = auth.uid()::text);
+  using (is_software_admin() or user_id = auth.uid()::text);
 
 -- HOLIDAYS
-create policy hol_select on holidays for select using (shop_id = current_shop_id());
+create policy hol_select on holidays for select
+  using (is_software_admin() or shop_id = current_shop_id());
 create policy hol_admin_write on holidays for all
-  using (shop_id = current_shop_id() and current_role_in_shop() = 'admin')
-  with check (shop_id = current_shop_id() and current_role_in_shop() = 'admin');
+  using (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'))
+  with check (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'));
 
 -- ============================================================
 -- 6. Convenience views
