@@ -1,5 +1,5 @@
 // DarziMate service worker — minimal cache for app shell.
-const CACHE = 'darzimate-v11';
+const CACHE = 'darzimate-v12';
 const ASSETS = [
   './',
   './index.html',

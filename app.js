@@ -804,6 +804,14 @@ function render() {
     return;
   }
 
+  // Rejected: show a message + sign-out only.
+  if (App.user.status === 'rejected') {
+    document.getElementById('app').classList.add('no-tab');
+    tabbar.hidden = true;
+    view.appendChild(viewRejected());
+    return;
+  }
+
   if (App.user.role === 'software_admin') view.appendChild(viewSoftwareAdmin());
   else if (App.user.role === 'admin')      view.appendChild(viewAdmin());
   else if (App.user.role === 'contractor') view.appendChild(viewContractor());
@@ -1060,6 +1068,23 @@ function signupWorkerForm() {
 }
 
 /* ─── Topbar / detail topbar ──────────────────────────────── */
+async function refreshApp() {
+  const btn = document.querySelector('.topbar .refresh-btn');
+  if (btn) { btn.textContent = '⏳'; btn.style.pointerEvents = 'none'; }
+  try {
+    const ok = await Store.loadFromRemote();
+    if (App.user) {
+      const me = Store.data.users.find(u => u.id === App.user.id);
+      if (me) App.user = me;
+    }
+    render();
+    toast(ok ? 'Refreshed' : 'No connection — local data only', ok ? 'success' : '');
+  } catch (e) {
+    toast('Refresh failed: ' + (e.message || 'unknown error'), 'error');
+    if (btn) { btn.textContent = '⟳'; btn.style.pointerEvents = ''; }
+  }
+}
+
 function topbar(title, subtitle, opts = {}) {
   const left = opts.back
     ? el('button', {
@@ -1067,6 +1092,12 @@ function topbar(title, subtitle, opts = {}) {
         onclick: () => goBack()
       }, '←')
     : null;
+
+  const refreshBtn = el('button', {
+    class: 'icon-btn refresh-btn', title: 'Refresh', 'aria-label': 'Refresh',
+    onclick: () => refreshApp()
+  }, '⟳');
+
   const right = opts.action || el('button', {
       class: 'icon-btn', title: 'Logout', 'aria-label': 'Logout',
       onclick: async () => {
@@ -1082,6 +1113,7 @@ function topbar(title, subtitle, opts = {}) {
       el('h2', null, title),
       subtitle ? el('div', { class: 'sub' }, subtitle) : null
     ),
+    refreshBtn,
     right
   );
 }
@@ -1122,6 +1154,30 @@ function chip(label, variant = '') {
 }
 
 /* ============================================================
+   REJECTED — locked screen for rejected applications
+   ============================================================ */
+function viewRejected() {
+  const wrap = el('div');
+  wrap.appendChild(topbar('Application rejected', App.user.name));
+
+  wrap.appendChild(el('div', { class: 'card', style: 'text-align:center;padding:32px 16px' },
+    el('div', { style: 'font-size:64px;margin-bottom:8px' }, '🚫'),
+    el('h2', null, 'Application rejected'),
+    el('p', { class: 'muted', style: 'margin-bottom:16px' },
+      'Your karkhana application was not approved. Please contact the software admin if you think this is a mistake.'),
+    el('button', {
+      class: 'btn full',
+      onclick: async () => {
+        await Auth.signOut();
+        App.user = null; App.route = 'login'; App.detail = null;
+        render();
+      }
+    }, 'Sign out')
+  ));
+  return wrap;
+}
+
+/* ============================================================
    PENDING APPROVAL — locked screen for new Bada Seth signups
    ============================================================ */
 function viewPendingApproval() {
@@ -1146,16 +1202,19 @@ function viewPendingApproval() {
       onclick: async () => {
         await Store.loadFromRemote();
         const me = Store.data.users.find(u => u.id === App.user.id);
-        if (me && me.status === 'active') {
-          App.user = me;
-          App.tab = 'home';
-          toast('Approved! Welcome aboard.', 'success');
+        if (!me) {
+          toast('Profile not found. Please sign in again.', 'error');
+          await Auth.signOut();
+          App.user = null; App.route = 'login'; App.detail = null;
           render();
-        } else if (me && me.status === 'rejected') {
-          toast('Your application was rejected. Contact the software admin.', 'error');
-        } else {
-          toast('Still waiting…', '');
+          return;
         }
+        App.user = me;
+        if (me.status === 'active')      toast('Approved! Welcome aboard.', 'success');
+        else if (me.status === 'rejected') toast('Your application was rejected.', 'error');
+        else                              toast('Still waiting…', '');
+        App.tab = 'home';
+        render();
       }
     }, 'Refresh status')
   ));
