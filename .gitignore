@@ -1,0 +1,27 @@
+# Local secrets / notes
+.env
+.env.local
+DEPLOY.local.md
+
+# Tooling caches
+.claude/
+.netlify/
+supabase/.temp/
+supabase/.branches/
+
+# Backup snapshots
+backup-*/
+*-backup-*.zip
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# npm
+node_modules/
+npm-debug.log*
