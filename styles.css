@@ -67,6 +67,10 @@ body.theme-midnight .tabbar {
   background: var(--c-surface);
   border-color: var(--c-border);
 }
+/* Keep the topbar dark in midnight theme so the gear icon stays readable */
+body.theme-midnight .topbar {
+  background: linear-gradient(135deg, #1E1B4B 0%, #312E81 100%);
+}
 
 body.theme-forest {
   --c-primary: #059669;
@@ -83,6 +87,29 @@ body.theme-cream {
   --c-accent: #DB2777;
   --c-bg: #FFFBEB;
 }
+
+/* ─── Pull-to-refresh indicator ─── */
+.ptr-indicator {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-60px);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  z-index: 9999;
+  pointer-events: none;
+  transition: transform 0.2s ease;
+}
+.ptr-indicator.visible { /* set by JS based on pull amount */ }
+.ptr-indicator.spinning { animation: ptr-spin 0.7s linear infinite; }
+@keyframes ptr-spin { to { transform: translateX(-50%) translateY(40px) rotate(360deg); } }
 
 /* ─── Photo avatar (overrides initials) ─── */
 .avatar.has-photo {
@@ -144,9 +171,10 @@ button { font-family: inherit; }
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: -16px -16px 16px -16px;
-  padding: 14px 16px;
+  gap: 8px;
+  /* Extend up to cover the device status bar in APK / standalone PWA */
+  margin: calc(-16px - env(safe-area-inset-top, 0px)) -16px 16px -16px;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px;
   background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-600) 100%);
   color: #fff;
   position: sticky;
@@ -156,16 +184,20 @@ button { font-family: inherit; }
 .topbar h1, .topbar h2 { color: #fff; margin: 0; }
 .topbar .sub { color: rgba(255,255,255,0.85); font-size: 12px; }
 .topbar .icon-btn {
-  background: rgba(255,255,255,0.18);
+  background: rgba(0,0,0,0.22);
   color: #fff;
-  border: none;
-  width: 36px; height: 36px;
+  border: 1px solid rgba(255,255,255,0.25);
+  width: 38px; height: 38px;
   border-radius: 50%;
   display: grid; place-items: center;
   cursor: pointer;
   font-size: 18px;
+  flex-shrink: 0;
 }
-.topbar .icon-btn:hover { background: rgba(255,255,255,0.28); }
+.topbar .icon-btn:hover { background: rgba(0,0,0,0.34); }
+.topbar .icon-btn.has-photo {
+  border: 2px solid rgba(255,255,255,0.65);
+}
 
 /* ─── Card ─── */
 .card {

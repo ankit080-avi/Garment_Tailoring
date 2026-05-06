@@ -506,6 +506,46 @@ const Domain = {
     }
     Store.save();
   },
+  // Hard-delete an admin + their entire shop including all production data.
+  // Postgres ON DELETE CASCADE on FKs to shops handles most of the chain;
+  // we delete the shop, then the admin_contractors links, then the user row.
+  async deleteAdminAndData(adminId) {
+    const u = this.userById(adminId);
+    if (!u) throw new Error('Admin not found');
+    const shopId = u.shop_id;
+
+    if (sb) {
+      if (shopId) {
+        const { error: e1 } = await sb.from('shops').delete().eq('id', shopId);
+        if (e1) throw new Error('Could not delete shop: ' + e1.message);
+      }
+      // Junction rows: delete ones referencing this admin (cascade also fires
+      // when we delete the user row, but doing it explicitly is clearer).
+      await sb.from('admin_contractors').delete().eq('admin_id', adminId);
+      const { error: e2 } = await sb.from('users').delete().eq('id', adminId);
+      if (e2) throw new Error('Could not delete user: ' + e2.message);
+    }
+
+    // Local cache: cascade by hand so the UI updates instantly without a remote round-trip.
+    if (shopId) {
+      const drop = (key, field) => {
+        Store.data[key] = (Store.data[key] || []).filter(r => r[field] !== shopId);
+      };
+      drop('orders', 'shop_id');
+      drop('lots', 'shop_id');
+      drop('worker_assignments', 'shop_id');
+      drop('production_entries', 'shop_id');
+      drop('payments', 'shop_id');
+      drop('designs', 'shop_id');
+      drop('piece_types', 'shop_id');
+      drop('notifications', 'shop_id');
+      drop('holidays', 'shop_id');
+      Store.data.shops = (Store.data.shops || []).filter(s => s.id !== shopId);
+    }
+    Store.data.admin_contractors = (Store.data.admin_contractors || []).filter(ac => ac.admin_id !== adminId);
+    Store.data.users = Store.data.users.filter(x => x.id !== adminId);
+    Store.saveCache();
+  },
   allContractors() { return Store.data.users.filter(u => u.role === 'contractor'); },
   workers() { return Store.data.users.filter(u => u.role === 'worker'); },
   workersForContractor(contractorId) {
@@ -715,11 +755,11 @@ const Auth = {
       return { userId, role: 'software_admin' };
     }
 
-    // Regular Bada Seth: create shop + user row, status='pending' until approved.
+    // Regular Owner: create shop + user row, status='pending' until approved.
     const shopId = uid('shop');
     {
       const { error: e1 } = await sb.from('shops').insert({
-        id: shopId, name: shop_name || (cleanName + "'s Karkhana"),
+        id: shopId, name: shop_name || (cleanName + "'s Workshop"),
         owner_user_id: userId
       });
       if (e1) throw new Error('Could not create shop: ' + e1.message);
@@ -746,7 +786,7 @@ const Auth = {
       .eq('role', 'admin')
       .maybeSingle();
     if (ae) throw new Error('Admin lookup: ' + ae.message);
-    if (!admin) throw new Error('No Bada Seth registered with that mobile yet — ask them to sign up first.');
+    if (!admin) throw new Error('No Owner registered with that mobile yet — ask them to sign up first.');
 
     const email = this.mobileToEmail(mobile);
     const { data, error } = await sb.auth.signUp({ email, password });
@@ -783,7 +823,7 @@ const Auth = {
       .eq('role', 'contractor')
       .maybeSingle();
     if (ce) throw new Error('Contractor lookup: ' + ce.message);
-    if (!contractor) throw new Error('No Chhota Seth registered with that mobile yet — ask them to sign up first.');
+    if (!contractor) throw new Error('No Contractor registered with that mobile yet — ask them to sign up first.');
 
     const email = this.mobileToEmail(mobile);
     const { data, error } = await sb.auth.signUp({ email, password });
@@ -841,7 +881,7 @@ function render() {
   }
   document.getElementById('app').classList.remove('no-tab');
 
-  // Pending Bada Seth: locked out until software admin approves.
+  // Pending Owner: locked out until software admin approves.
   if (Domain.isPending(App.user)) {
     document.getElementById('app').classList.add('no-tab');
     tabbar.hidden = true;
@@ -884,7 +924,7 @@ function roleTabs(role) {
   if (role === 'software_admin') return [
     { key: 'home',       ico: '🏠', label: 'Home' },
     { key: 'pending',    ico: '⏳', label: 'Pending' },
-    { key: 'karkhanas',  ico: '🏭', label: 'Karkhanas' },
+    { key: 'karkhanas',  ico: '🏭', label: 'Workshops' },
     { key: 'reports',    ico: '📊', label: 'Reports' }
   ];
   if (role === 'admin') return [
@@ -898,7 +938,7 @@ function roleTabs(role) {
     { key: 'home',     ico: '🏠', label: 'Home' },
     { key: 'lots',     ico: '📦', label: 'Lots' },
     { key: 'workers',  ico: '👷', label: 'Workers' },
-    { key: 'admins',   ico: '🏢', label: 'Bada Seths' },
+    { key: 'admins',   ico: '🏢', label: 'Owners' },
     { key: 'payments', ico: '💸', label: 'Payments' }
   ];
   if (role === 'worker') return [
@@ -986,9 +1026,9 @@ function viewSignUpForm(role) {
   const rolePicker = el('div', { class: 'card' },
     el('div', { class: 'muted', style: 'margin-bottom:8px;font-size:13px' }, 'I am a…'),
     el('div', { class: 'row gap-12' },
-      roleBtn('admin',      'Bada Seth',   '👔', role),
-      roleBtn('contractor', 'Chhota Seth', '🧑‍🔧', role),
-      roleBtn('worker',     'Darzi',       '✂️', role)
+      roleBtn('admin',      'Owner',   '👔', role),
+      roleBtn('contractor', 'Contractor', '🧑‍🔧', role),
+      roleBtn('worker',     'Worker',      '✂️', role)
     )
   );
   wrap.appendChild(rolePicker);
@@ -1027,20 +1067,20 @@ function signupAdminForm() {
         const me = Auth.current();
         App.user = me; App.route = me.role; App.tab = 'home'; App.detail = null;
         Store.subscribeRealtime();
-        toast('Karkhana created — welcome, ' + me.name, 'success');
+        toast('Workshop created — welcome, ' + me.name, 'success');
         render();
       } catch (err) {
         toast(err.message || 'Sign up failed', 'error');
-        btn.disabled = false; btn.textContent = 'Create karkhana';
+        btn.disabled = false; btn.textContent = 'Create workshop';
       }
     }
   });
-  form.appendChild(el('h3', null, 'Create your karkhana'));
+  form.appendChild(el('h3', null, 'Create your workshop'));
   form.appendChild(field('Your name', input('name', { required: true, placeholder: 'Full name' })));
-  form.appendChild(field('Karkhana name', input('shop_name', { required: true, placeholder: 'e.g. Sharma Garments' })));
+  form.appendChild(field('Workshop name', input('shop_name', { required: true, placeholder: 'e.g. Sharma Garments' })));
   form.appendChild(field('Your mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit', autocomplete: 'tel' })));
   form.appendChild(field('Password', input('password', { required: true, type: 'password', minlength: 6, placeholder: '6+ characters', autocomplete: 'new-password' })));
-  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Create karkhana'));
+  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Create workshop'));
   return form;
 }
 
@@ -1064,17 +1104,17 @@ function signupContractorForm() {
         render();
       } catch (err) {
         toast(err.message || 'Sign up failed', 'error');
-        btn.disabled = false; btn.textContent = 'Sign up as Chhota Seth';
+        btn.disabled = false; btn.textContent = 'Sign up as Contractor';
       }
     }
   });
-  form.appendChild(el('h3', null, 'Sign up as Chhota Seth'));
+  form.appendChild(el('h3', null, 'Sign up as Contractor'));
   form.appendChild(field('Your name', input('name', { required: true, placeholder: 'Full name' })));
   form.appendChild(field('Your mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit', autocomplete: 'tel' })));
   form.appendChild(field('Password', input('password', { required: true, type: 'password', minlength: 6, placeholder: '6+ characters', autocomplete: 'new-password' })));
-  form.appendChild(field('Bada Seth\'s mobile', input('admin_mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: 'Admin\'s 10-digit mobile' }),
+  form.appendChild(field('Owner\'s mobile', input('admin_mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: 'Admin\'s 10-digit mobile' }),
     'They must already be signed up.'));
-  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign up as Chhota Seth'));
+  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign up as Contractor'));
   return form;
 }
 
@@ -1098,17 +1138,17 @@ function signupWorkerForm() {
         render();
       } catch (err) {
         toast(err.message || 'Sign up failed', 'error');
-        btn.disabled = false; btn.textContent = 'Sign up as Darzi';
+        btn.disabled = false; btn.textContent = 'Sign up as Worker';
       }
     }
   });
-  form.appendChild(el('h3', null, 'Sign up as Darzi'));
+  form.appendChild(el('h3', null, 'Sign up as Worker'));
   form.appendChild(field('Your name', input('name', { required: true, placeholder: 'Full name' })));
   form.appendChild(field('Your mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit', autocomplete: 'tel' })));
   form.appendChild(field('Password', input('password', { required: true, type: 'password', minlength: 6, placeholder: '6+ characters', autocomplete: 'new-password' })));
-  form.appendChild(field('Chhota Seth\'s mobile', input('contractor_mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: 'Contractor\'s 10-digit mobile' }),
+  form.appendChild(field('Contractor\'s mobile', input('contractor_mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: 'Contractor\'s 10-digit mobile' }),
     'They must already be signed up.'));
-  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign up as Darzi'));
+  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign up as Worker'));
   return form;
 }
 
@@ -1209,7 +1249,7 @@ function viewRejected() {
     el('div', { style: 'font-size:64px;margin-bottom:8px' }, '🚫'),
     el('h2', null, 'Application rejected'),
     el('p', { class: 'muted', style: 'margin-bottom:16px' },
-      'Your karkhana application was not approved. Please contact the software admin if you think this is a mistake.'),
+      'Your application was not approved. Please contact the software admin if you think this is a mistake.'),
     el('button', {
       class: 'btn full',
       onclick: async () => {
@@ -1223,7 +1263,7 @@ function viewRejected() {
 }
 
 /* ============================================================
-   PENDING APPROVAL — locked screen for new Bada Seth signups
+   PENDING APPROVAL — locked screen for new Owner signups
    ============================================================ */
 function viewPendingApproval() {
   const wrap = el('div');
@@ -1235,9 +1275,9 @@ function viewPendingApproval() {
     el('div', { style: 'font-size:64px;margin-bottom:8px' }, '⏳'),
     el('h2', null, 'Waiting for software admin approval'),
     el('p', { class: 'muted', style: 'margin-bottom:16px' },
-      'Your karkhana application has been received. Once the software admin approves, you can start using DarziMate.'),
+      'Your application has been received. Once the software admin approves, you can start using DarziMate.'),
     el('div', { class: 'card', style: 'background: var(--c-primary-50);border-color:transparent;text-align:left' },
-      el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:4px' }, 'Karkhana'),
+      el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:4px' }, 'Workshop'),
       el('div', { style: 'font-weight:700' }, myShop?.name || '—'),
       el('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' }, 'Mobile'),
       el('div', null, App.user.mobile)
@@ -1276,7 +1316,7 @@ function viewSoftwareAdmin() {
   const titles = {
     home:       'Software Admin',
     pending:    'Pending applications',
-    karkhanas:  'All karkhanas',
+    karkhanas:  'All workshops',
     reports:    'Reports'
   };
   wrap.appendChild(topbar('DarziMate', titles[App.tab] || ''));
@@ -1307,7 +1347,7 @@ function softwareAdminHome(wrap) {
     .reduce((s, p) => s + Number(p.amount), 0);
 
   wrap.appendChild(el('div', { class: 'stats' },
-    stat('Karkhanas', allShops.length, 'primary', () => goTab('karkhanas')),
+    stat('Workshops', allShops.length, 'primary', () => goTab('karkhanas')),
     stat('Pending', pendingCount, pendingCount > 0 ? 'accent' : '', () => goTab('pending')),
     stat('Contractors', allContractors.length),
     stat('Workers', allWorkers.length, 'success'),
@@ -1331,9 +1371,9 @@ function softwareAdminHome(wrap) {
     ));
   }
 
-  wrap.appendChild(sectionH('Recent karkhanas'));
+  wrap.appendChild(sectionH('Recent workshops'));
   const recent = allShops.slice().reverse().slice(0, 5);
-  if (recent.length === 0) wrap.appendChild(emptyState('🏭', 'No karkhanas yet'));
+  if (recent.length === 0) wrap.appendChild(emptyState('🏭', 'No workshops yet'));
   else recent.forEach(s => wrap.appendChild(karkhanaListItem(s)));
 }
 
@@ -1386,7 +1426,7 @@ function softwareAdminPending(wrap) {
 function softwareAdminKarkhanas(wrap) {
   const list = Store.data.shops;
   if (list.length === 0) {
-    wrap.appendChild(emptyState('🏭', 'No karkhanas yet'));
+    wrap.appendChild(emptyState('🏭', 'No workshops yet'));
     return;
   }
   list.forEach(s => wrap.appendChild(karkhanaListItem(s)));
@@ -1422,7 +1462,7 @@ function karkhanaListItem(shop) {
 
 function softwareAdminKarkhanaDetail(wrap) {
   const shop = Store.data.shops.find(s => s.id === App.detail.id);
-  if (!shop) { wrap.appendChild(emptyState('❓', 'Karkhana not found', 'Back', goBack)); return wrap; }
+  if (!shop) { wrap.appendChild(emptyState('❓', 'Workshop not found', 'Back', goBack)); return wrap; }
   const owner = Store.data.users.find(u => u.id === shop.owner_user_id);
   const orders = Store.data.orders.filter(o => o.shop_id === shop.id);
   const lots = Store.data.lots.filter(l => l.shop_id === shop.id);
@@ -1465,6 +1505,30 @@ function softwareAdminKarkhanaDetail(wrap) {
   if (orders.length === 0) wrap.appendChild(emptyState('📋', 'No orders yet'));
   else orders.slice().reverse().slice(0, 10).forEach(o => wrap.appendChild(orderListItem(o)));
 
+  // ─── Danger zone: hard-delete this workshop + every row attached to it ───
+  wrap.appendChild(el('div', {
+    class: 'card',
+    style: 'background:var(--c-danger-50);border-color:transparent;margin-top:24px'
+  },
+    el('div', { style: 'font-weight:700;color:var(--c-danger);margin-bottom:6px' }, '⚠️ Danger zone'),
+    el('div', { class: 'muted', style: 'font-size:13px;margin-bottom:12px' },
+      'Permanently delete ' + (shop?.name || 'this workshop') + ' along with every order, lot, ' +
+      'worker assignment, production entry and payment recorded against it. Cannot be undone.'),
+    el('button', {
+      class: 'btn full danger',
+      onclick: async () => {
+        if (!confirm('Permanently delete "' + shop.name + '" and ALL its data? This cannot be undone.')) return;
+        const t = prompt('Type DELETE in capitals to confirm:');
+        if (t !== 'DELETE') { toast('Not confirmed — cancelled', ''); return; }
+        try {
+          await Domain.deleteAdminAndData(owner.id);
+          toast('Workshop deleted', 'success');
+          goBack();
+        } catch (e) { toast(e.message, 'error'); }
+      }
+    }, '🗑️ Delete this workshop')
+  ));
+
   return wrap;
 }
 
@@ -1477,19 +1541,19 @@ function softwareAdminReports(wrap) {
     return s + (a ? e.pieces_done * a.rate : 0);
   }, 0);
 
-  wrap.appendChild(sectionH('Last 7 days · all karkhanas'));
+  wrap.appendChild(sectionH('Last 7 days · all workshops'));
   wrap.appendChild(el('div', { class: 'stats' },
     stat('Pieces', totalPieces, 'primary'),
     stat('Production value', fmtINR(earned), 'accent'),
     stat('Active workers', new Set(all.map(e => e.worker_id)).size, 'success'),
-    stat('Active karkhanas', new Set(all.map(e => {
+    stat('Active workshops', new Set(all.map(e => {
       const a = Domain.assignmentById(e.assignment_id);
       const lot = a ? Domain.lotById(a.lot_id) : null;
       return lot?.shop_id;
     }).filter(Boolean)).size)
   ));
 
-  wrap.appendChild(sectionH('By karkhana (7 days)'));
+  wrap.appendChild(sectionH('By workshop (7 days)'));
   const byShop = {};
   all.forEach(e => {
     const a = Domain.assignmentById(e.assignment_id);
@@ -1520,7 +1584,7 @@ function viewAdmin() {
   if (App.detail) return renderAdminDetail(wrap);
 
   const titles = {
-    home:        'Bada Seth · ' + Store.data.shop.name,
+    home:        'Owner · ' + Store.data.shop.name,
     orders:      'Bulk orders',
     contractors: 'Contractors',
     designs:     'Designs & rates',
@@ -1832,10 +1896,10 @@ function viewContractor() {
   if (App.detail) return renderContractorDetail(wrap);
 
   const titles = {
-    home: 'Chhota Seth · ' + App.user.name,
+    home: 'Contractor · ' + App.user.name,
     lots: 'My Lots',
     workers: 'Workers',
-    admins: 'Bada Seths',
+    admins: 'Owners',
     payments: 'Payments'
   };
   wrap.appendChild(topbar('DarziMate', titles[App.tab] || ''));
@@ -1851,7 +1915,7 @@ function viewContractor() {
 function contractorAdmins(wrap) {
   const admins = Domain.adminsForContractor(App.user.id);
   if (admins.length === 0) {
-    wrap.appendChild(emptyState('🏢', 'No Bada Seths linked. They can find you by your mobile number.'));
+    wrap.appendChild(emptyState('🏢', 'No Owners linked. They can find you by your mobile number.'));
     return;
   }
   admins.forEach(a => {
@@ -1888,7 +1952,7 @@ function contractorHome(wrap) {
   wrap.appendChild(el('div', { class: 'stats' },
     stat('My lots', lots.length, 'primary', () => goTab('lots')),
     stat('Workers', workers.length, 'success', () => goTab('workers')),
-    stat('Bada Seths', admins.length, 'accent', () => goTab('admins')),
+    stat('Owners', admins.length, 'accent', () => goTab('admins')),
     stat('Pieces today', piecesToday),
     stat('To pay workers', fmtINR(balance), 'accent')
   ));
@@ -2756,9 +2820,69 @@ function settingsModal() {
   return wrap;
 }
 
+/* ─── Pull-to-refresh ─────────────────────────────────────── */
+function setupPullToRefresh() {
+  const THRESHOLD = 70;        // px to trigger refresh
+  const MAX = 110;             // max pull distance for the indicator
+  let startY = 0, currentY = 0, pulling = false, refreshing = false;
+
+  const indicator = el('div', { class: 'ptr-indicator', id: 'ptrIndicator' }, '⟳');
+  document.body.appendChild(indicator);
+
+  function setPull(y) {
+    const clamped = Math.min(Math.max(y, 0), MAX);
+    indicator.style.transform =
+      `translateX(-50%) translateY(${clamped - 60}px) rotate(${clamped * 3}deg)`;
+    indicator.style.opacity = clamped > 0 ? '1' : '0';
+  }
+
+  function reset() {
+    indicator.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+    indicator.style.transform = 'translateX(-50%) translateY(-60px)';
+    indicator.style.opacity = '0';
+    indicator.classList.remove('spinning');
+    setTimeout(() => { indicator.style.transition = ''; }, 250);
+  }
+
+  document.addEventListener('touchstart', (e) => {
+    if (refreshing) return;
+    if (window.scrollY > 0) return;
+    startY = e.touches[0].clientY;
+    currentY = startY;
+    pulling = true;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!pulling || refreshing) return;
+    currentY = e.touches[0].clientY;
+    const dy = currentY - startY;
+    if (dy <= 0) { pulling = false; setPull(0); return; }
+    // Show indicator with rubber-band damping
+    setPull(dy * 0.5);
+  }, { passive: true });
+
+  document.addEventListener('touchend', async () => {
+    if (!pulling || refreshing) { pulling = false; return; }
+    pulling = false;
+    const dy = (currentY - startY) * 0.5;
+    if (dy >= THRESHOLD) {
+      refreshing = true;
+      indicator.classList.add('spinning');
+      indicator.style.transform = 'translateX(-50%) translateY(40px)';
+      indicator.style.opacity = '1';
+      try { await refreshApp(); } finally {
+        setTimeout(() => { refreshing = false; reset(); }, 300);
+      }
+    } else {
+      reset();
+    }
+  });
+}
+
 /* ─── Bootstrap ───────────────────────────────────────────── */
 async function bootstrap() {
   applyTheme(getTheme());
+  setupPullToRefresh();
   await Store.load();   // cache → remote (if session)
 
   // If Supabase is configured and there's a stale local session without a

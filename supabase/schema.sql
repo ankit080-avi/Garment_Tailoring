@@ -261,6 +261,10 @@ create policy shops_update on shops for update
     is_software_admin()
     or (id = current_shop_id() and current_role_in_shop() = 'admin')
   );
+-- Software admin (or the owner themselves) can hard-delete a shop.
+-- Cascade FKs wipe orders/lots/assignments/production/payments/notifications/holidays/designs/piece_types.
+create policy shops_delete on shops for delete
+  using (is_software_admin() or owner_user_id = auth.uid()::text);
 
 -- USERS
 -- Self-signup: a freshly-authenticated user can create exactly their own row.
@@ -285,6 +289,10 @@ create policy users_update on users for update
     or id = auth.uid()::text
     or (current_role_in_shop() = 'contractor' and parent_user_id = auth.uid()::text)
   );
+-- Software admin (or the user themselves) can hard-delete a users row.
+-- Other users referencing this one via parent_user_id are nulled (FK on delete set null).
+create policy users_delete on users for delete
+  using (is_software_admin() or id = auth.uid()::text);
 
 -- ADMIN_CONTRACTORS
 create policy ac_select on admin_contractors for select
