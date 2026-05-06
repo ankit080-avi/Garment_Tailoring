@@ -1,5 +1,5 @@
 // KarkhanaPro service worker — minimal cache for app shell.
-const CACHE = 'karkhanapro-v8';
+const CACHE = 'karkhanapro-v9';
 const ASSETS = [
   './',
   './index.html',

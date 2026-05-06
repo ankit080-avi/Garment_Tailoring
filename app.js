@@ -133,133 +133,115 @@ const Store = {
   },
   saveCache() { try { localStorage.setItem(this.KEY, JSON.stringify(this.data)); } catch {} },
 
+  // Pull every accessible table from Supabase. RLS does the per-role filtering.
   async loadFromRemote() {
     if (!sb) return false;
     try {
-      const { data: session } = await sb.auth.getSession();
-      if (!session?.session) return false;
+      const { data: sess } = await sb.auth.getSession();
+      if (!sess?.session) return false;
+
+      const results = await Promise.all(TABLES.map(t => sb.from(t).select('*')));
+      const data = this.data || seed();
+      TABLES.forEach((t, i) => {
+        const r = results[i];
+        if (r.error) { console.warn('load ' + t + ':', r.error.message); return; }
+        data[t] = r.data || [];
+      });
+
+      // Find own user row → set session + active shop.
+      const me = data.users.find(u => u.id === sess.session.user.id);
+      if (me) {
+        const shopId = me.shop_id || (data.shops[0] && data.shops[0].id) || null;
+        data.shop = data.shops.find(s => s.id === shopId) || data.shops[0] || seed().shop;
+        data.session = { userId: me.id, role: me.role, shopId };
+      } else {
+        // Authenticated but no profile row yet — first run mid-signup or lost row.
+        data.session = null;
+      }
+
+      this.data = data;
+      this.saveCache();
       this.remoteReady = true;
       return true;
     } catch (e) { console.warn('Remote load failed', e); return false; }
   },
+
   async load() {
     this.loadFromCache();
     if (REMOTE_ENABLED) await this.loadFromRemote();
   },
-  save() { this.saveCache(); }
+
+  // Brute-force sync: upsert every row in every table back to Supabase.
+  // RLS enforces per-row authorization; conflicts resolve on primary-key id.
+  // For karkhana scale (low hundreds of rows total) this is plenty fast.
+  async upsertAll() {
+    if (!sb || !this.data || !this.data.session) return;
+    for (const t of TABLES) {
+      const rows = this.data[t] || [];
+      if (rows.length === 0) continue;
+      try {
+        const { error } = await sb.from(t).upsert(rows, { onConflict: 'id' });
+        if (error) console.warn('sync ' + t + ':', error.message);
+      } catch (e) { console.warn('sync ' + t + ':', e.message); }
+    }
+  },
+
+  save() {
+    this.saveCache();
+    if (this._syncTimer) clearTimeout(this._syncTimer);
+    if (REMOTE_ENABLED) {
+      this._syncTimer = setTimeout(() => this.upsertAll(), 350);
+    }
+  },
+
+  // Realtime: re-pull a changed table when any row event fires.
+  subscribeRealtime() {
+    if (!sb || !this.data || !this.data.session) return;
+    if (this._channel) return; // already subscribed
+    this._channel = sb.channel('karkhana');
+    TABLES.forEach(t => {
+      this._channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, async () => {
+        try {
+          const { data, error } = await sb.from(t).select('*');
+          if (!error && data) {
+            this.data[t] = data;
+            this.saveCache();
+            try { render(); } catch {}
+          }
+        } catch {}
+      });
+    });
+    this._channel.subscribe();
+  },
+
+  unsubscribeRealtime() {
+    if (this._channel) { try { sb.removeChannel(this._channel); } catch {} this._channel = null; }
+  }
 };
 
-/* ─── Seed data ───────────────────────────────────────────── */
+/* ─── Empty bootstrap state ───────────────────────────────── */
 function seed() {
-  const shopId  = 'shop_demo';
-  const adminId = 'u_admin';
-  const conId   = 'u_contractor1';
-  const workerId = 'u_worker1';
-  const workerId2 = 'u_worker2';
-
-  const dShirtId = 'd_shirt';
-  const dKurtaId = 'd_kurta';
-
-  // piece type ids
-  const ptShirtCutId = 'pt_shirt_cut';
-  const ptShirtStitchId = 'pt_shirt_stitch';
-  const ptShirtFinishId = 'pt_shirt_finish';
-  const ptKurtaCutId = 'pt_kurta_cut';
-  const ptKurtaStitchId = 'pt_kurta_stitch';
-  const ptKurtaEmbId = 'pt_kurta_emb';
-
-  const orderId = 'o_demo1';
-  const lot1Id = 'l_demo1';
-  const lot2Id = 'l_demo2';
-
-  const a1 = 'a_cut1', a2 = 'a_stitch1';
-
-  const tNow = new Date().toISOString();
-
-  const admin2Id = 'u_admin2';
-  const con2Id = 'u_contractor2';
-
   return {
     session: null,
-    // First admin's shop. Each admin runs their own shop.
-    shop: {
-      id: shopId, name: 'Demo Karkhana', owner_user_id: adminId,
-      address: 'Plot 12, Industrial Area', phone: '9999999999',
-      upi_id: 'demo@upi', upi_name: 'Demo Karkhana'
-    },
-    shops: [
-      { id: shopId, name: 'Demo Karkhana', owner_user_id: adminId,
-        address: 'Plot 12, Industrial Area', phone: '9999999999',
-        upi_id: 'demo@upi', upi_name: 'Demo Karkhana' },
-      { id: 'shop_demo2', name: 'Sharma Garments', owner_user_id: admin2Id,
-        address: 'Mandi Road', phone: '9999999998', upi_id: '', upi_name: '' }
-    ],
-    users: [
-      { id: adminId, shop_id: shopId, mobile: '9999999999', name: 'Bada Seth (Admin)',
-        role: 'admin', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
-      { id: admin2Id, shop_id: 'shop_demo2', mobile: '9999999998', name: 'Sharma Bada Seth',
-        role: 'admin', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
-      { id: conId, shop_id: null, mobile: '8888888888', name: 'Chhota Seth (Contractor)',
-        role: 'contractor', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
-      { id: con2Id, shop_id: null, mobile: '8888888887', name: 'Verma Chhota Seth',
-        role: 'contractor', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
-      { id: workerId, shop_id: null, mobile: '7777777777', name: 'Darzi Ramesh',
-        role: 'worker', password_hash: null, parent_user_id: conId, photo: null, status: 'active', created_at: tNow },
-      { id: workerId2, shop_id: null, mobile: '7777777778', name: 'Darzi Suresh',
-        role: 'worker', password_hash: null, parent_user_id: conId, photo: null, status: 'active', created_at: tNow }
-    ],
-    admin_contractors: [
-      // Demo: contractor1 works for both admins; contractor2 works only for admin2
-      { id: 'ac1', admin_id: adminId,  contractor_id: conId,  status: 'active', since: today(), notes: null, created_at: tNow },
-      { id: 'ac2', admin_id: admin2Id, contractor_id: conId,  status: 'active', since: today(), notes: null, created_at: tNow },
-      { id: 'ac3', admin_id: admin2Id, contractor_id: con2Id, status: 'active', since: today(), notes: null, created_at: tNow }
-    ],
-    designs: [
-      { id: dShirtId, shop_id: shopId, name: 'Formal Shirt', sku: 'SH-001', photo: null,
-        default_rate: 60, active: true, created_at: tNow },
-      { id: dKurtaId, shop_id: shopId, name: 'Cotton Kurta', sku: 'KU-002', photo: null,
-        default_rate: 90, active: true, created_at: tNow }
-    ],
-    piece_types: [
-      { id: ptShirtCutId,    shop_id: shopId, design_id: dShirtId, name: 'Cutting',    default_rate: 12, sort_order: 1 },
-      { id: ptShirtStitchId, shop_id: shopId, design_id: dShirtId, name: 'Stitching',  default_rate: 30, sort_order: 2 },
-      { id: ptShirtFinishId, shop_id: shopId, design_id: dShirtId, name: 'Finishing',  default_rate: 18, sort_order: 3 },
-      { id: ptKurtaCutId,    shop_id: shopId, design_id: dKurtaId, name: 'Cutting',    default_rate: 15, sort_order: 1 },
-      { id: ptKurtaStitchId, shop_id: shopId, design_id: dKurtaId, name: 'Stitching',  default_rate: 45, sort_order: 2 },
-      { id: ptKurtaEmbId,    shop_id: shopId, design_id: dKurtaId, name: 'Embroidery', default_rate: 30, sort_order: 3 }
-    ],
-    orders: [
-      { id: orderId, shop_id: shopId, design_id: dShirtId, total_qty: 200,
-        deadline: daysAgo(-7), notes: 'Wholesale order — 200 formal shirts', status: 'in_progress',
-        created_by: adminId, created_at: tNow }
-    ],
-    lots: [
-      { id: lot1Id, shop_id: shopId, order_id: orderId, lot_no: 1, qty: 100,
-        contractor_id: conId, status: 'in_progress', assigned_at: tNow, created_at: tNow },
-      { id: lot2Id, shop_id: shopId, order_id: orderId, lot_no: 2, qty: 100,
-        contractor_id: null, status: 'unassigned', assigned_at: null, created_at: tNow }
-    ],
-    worker_assignments: [
-      { id: a1, shop_id: shopId, lot_id: lot1Id, worker_id: workerId, contractor_id: conId,
-        piece_type_id: ptShirtCutId, qty_assigned: 50, rate: 12, status: 'in_progress', assigned_at: tNow },
-      { id: a2, shop_id: shopId, lot_id: lot1Id, worker_id: workerId, contractor_id: conId,
-        piece_type_id: ptShirtStitchId, qty_assigned: 50, rate: 30, status: 'open', assigned_at: tNow }
-    ],
-    production_entries: [
-      { id: uid('pe'), shop_id: shopId, assignment_id: a1, worker_id: workerId, contractor_id: conId,
-        date: daysAgo(2), pieces_done: 15, notes: null, photo: null, created_at: tNow },
-      { id: uid('pe'), shop_id: shopId, assignment_id: a1, worker_id: workerId, contractor_id: conId,
-        date: daysAgo(1), pieces_done: 18, notes: null, photo: null, created_at: tNow }
-    ],
-    payments: [
-      { id: uid('p'), shop_id: shopId, payer_id: conId, payee_id: workerId,
-        amount: 200, type: 'advance', method: 'cash', date: daysAgo(2),
-        note: 'Advance for the week', against_assignment_id: null, against_lot_id: null, created_at: tNow }
-    ],
+    shop: { id: '', name: '', owner_user_id: '' },
+    shops: [],
+    users: [],
+    admin_contractors: [],
+    designs: [],
+    piece_types: [],
+    orders: [],
+    lots: [],
+    worker_assignments: [],
+    production_entries: [],
+    payments: [],
     notifications: [],
     holidays: []
   };
 }
+
+const TABLES = ['shops','users','admin_contractors','designs','piece_types',
+  'orders','lots','worker_assignments','production_entries','payments',
+  'notifications','holidays'];
 
 /* ─── Domain ──────────────────────────────────────────────── */
 const Domain = {
@@ -602,33 +584,145 @@ const Domain = {
 };
 
 /* ─── Auth ────────────────────────────────────────────────── */
+function prettyAuthError(error) {
+  const msg = (error && error.message) || 'Unknown error';
+  if (/already registered|already exists/i.test(msg)) return 'This mobile is already registered. Try signing in.';
+  if (/invalid login credentials/i.test(msg)) return 'Wrong mobile or password.';
+  if (/email rate limit/i.test(msg)) return 'Too many attempts. Wait a minute and try again.';
+  return msg;
+}
+
 const Auth = {
-  async ensureSeedPasswords() {
-    let touched = false;
-    for (const u of Store.data.users) {
-      if (!u.password_hash) {
-        u.password_hash = await hashPassword('1234');
-        touched = true;
-      }
-    }
-    if (touched) Store.save();
-  },
+  // Mobile is the public identity; Supabase Auth wants an email format,
+  // so we map mobile → fake email. The fake domain never sends real mail.
+  mobileToEmail(m) { return String(m || '').trim() + '@karkhana.local'; },
+
   current() {
     const s = Store.data && Store.data.session;
     if (!s) return null;
     return Store.data.users.find(u => u.id === s.userId) || null;
   },
-  async login(mobile, password) {
-    const m = String(mobile || '').trim();
-    const u = Store.data.users.find(x => x.mobile === m && x.status !== 'disabled');
-    if (!u) throw new Error('User not found');
-    const h = await hashPassword(password);
-    if (h !== u.password_hash) throw new Error('Wrong password');
-    Store.data.session = { userId: u.id, role: u.role, shopId: u.shop_id };
-    Store.save();
-    return u;
+
+  async signIn(mobile, password) {
+    if (!sb) throw new Error('Supabase not configured');
+    const email = this.mobileToEmail(mobile);
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(prettyAuthError(error));
+
+    // Pull profile + populate Store
+    await Store.loadFromRemote();
+    const me = Store.data.users.find(u => u.id === data.user.id);
+    if (!me) throw new Error('Profile row missing. Please sign up again or contact support.');
+    return me;
   },
-  logout() { Store.data.session = null; Store.save(); }
+
+  async signUpAdmin({ name, mobile, password, shop_name }) {
+    if (!sb) throw new Error('Supabase not configured');
+    const email = this.mobileToEmail(mobile);
+
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if (error) throw new Error(prettyAuthError(error));
+    if (!data.session) {
+      // If the project still has email confirmation on, signUp returns no session.
+      throw new Error('Email confirmation is enabled. Disable it in Supabase Auth settings, then try again.');
+    }
+    const userId = data.user.id;
+
+    const shopId = uid('shop');
+    const cleanMobile = String(mobile).trim();
+    const cleanName = String(name).trim();
+
+    {
+      const { error: e1 } = await sb.from('shops').insert({
+        id: shopId, name: shop_name || (cleanName + "'s Karkhana"),
+        owner_user_id: userId
+      });
+      if (e1) throw new Error('Could not create shop: ' + e1.message);
+    }
+    {
+      const { error: e2 } = await sb.from('users').insert({
+        id: userId, shop_id: shopId, mobile: cleanMobile, name: cleanName,
+        role: 'admin', status: 'active'
+      });
+      if (e2) throw new Error('Could not create profile: ' + e2.message);
+    }
+
+    await Store.loadFromRemote();
+    return { userId, shopId };
+  },
+
+  async signUpContractor({ name, mobile, password, admin_mobile }) {
+    if (!sb) throw new Error('Supabase not configured');
+
+    const adminMobile = String(admin_mobile).trim();
+    const { data: admin, error: ae } = await sb.from('users')
+      .select('id, role, name')
+      .eq('mobile', adminMobile)
+      .eq('role', 'admin')
+      .maybeSingle();
+    if (ae) throw new Error('Admin lookup: ' + ae.message);
+    if (!admin) throw new Error('No Bada Seth registered with that mobile yet — ask them to sign up first.');
+
+    const email = this.mobileToEmail(mobile);
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if (error) throw new Error(prettyAuthError(error));
+    if (!data.session) throw new Error('Email confirmation is enabled. Disable it in Supabase Auth settings, then try again.');
+    const userId = data.user.id;
+
+    {
+      const { error: e1 } = await sb.from('users').insert({
+        id: userId, shop_id: null, mobile: String(mobile).trim(),
+        name: String(name).trim(), role: 'contractor', status: 'active'
+      });
+      if (e1) throw new Error('Could not create profile: ' + e1.message);
+    }
+    {
+      const { error: e2 } = await sb.from('admin_contractors').insert({
+        id: uid('ac'), admin_id: admin.id, contractor_id: userId,
+        status: 'active', since: today()
+      });
+      if (e2) throw new Error('Could not link to admin: ' + e2.message);
+    }
+
+    await Store.loadFromRemote();
+    return { userId };
+  },
+
+  async signUpWorker({ name, mobile, password, contractor_mobile }) {
+    if (!sb) throw new Error('Supabase not configured');
+
+    const cMobile = String(contractor_mobile).trim();
+    const { data: contractor, error: ce } = await sb.from('users')
+      .select('id, role, name')
+      .eq('mobile', cMobile)
+      .eq('role', 'contractor')
+      .maybeSingle();
+    if (ce) throw new Error('Contractor lookup: ' + ce.message);
+    if (!contractor) throw new Error('No Chhota Seth registered with that mobile yet — ask them to sign up first.');
+
+    const email = this.mobileToEmail(mobile);
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if (error) throw new Error(prettyAuthError(error));
+    if (!data.session) throw new Error('Email confirmation is enabled. Disable it in Supabase Auth settings, then try again.');
+    const userId = data.user.id;
+
+    const { error: e1 } = await sb.from('users').insert({
+      id: userId, shop_id: null, mobile: String(mobile).trim(),
+      name: String(name).trim(), role: 'worker',
+      parent_user_id: contractor.id, status: 'active'
+    });
+    if (e1) throw new Error('Could not create profile: ' + e1.message);
+
+    await Store.loadFromRemote();
+    return { userId };
+  },
+
+  async signOut() {
+    Store.unsubscribeRealtime();
+    if (sb) await sb.auth.signOut().catch(() => {});
+    Store.data = seed();
+    Store.saveCache();
+  }
 };
 
 /* ─── App state + router ──────────────────────────────────── */
@@ -716,6 +810,33 @@ function viewLogin() {
     el('div', { class: 'tagline' }, 'Tailoring production manager')
   ));
 
+  let mode = App._loginMode || 'signin';   // 'signin' | 'signup'
+  let signupRole = App._signupRole || 'admin';  // 'admin' | 'contractor' | 'worker'
+
+  const tabs = el('div', { class: 'row gap-12 mb-12', style: 'border:1px solid var(--c-border);border-radius:12px;padding:4px' });
+  const tabSignIn = el('button', { type: 'button', style: 'flex:1', onclick: () => { App._loginMode = 'signin'; render(); } }, 'Sign in');
+  const tabSignUp = el('button', { type: 'button', style: 'flex:1', onclick: () => { App._loginMode = 'signup'; render(); } }, 'Sign up');
+  tabSignIn.className = 'btn sm ' + (mode === 'signin' ? '' : 'ghost');
+  tabSignUp.className = 'btn sm ' + (mode === 'signup' ? '' : 'ghost');
+  tabs.appendChild(tabSignIn); tabs.appendChild(tabSignUp);
+  wrap.appendChild(tabs);
+
+  if (mode === 'signin') {
+    wrap.appendChild(viewSignInForm());
+  } else {
+    wrap.appendChild(viewSignUpForm(signupRole));
+  }
+
+  if (!REMOTE_ENABLED) {
+    wrap.appendChild(el('div', { class: 'card', style: 'background: var(--c-warning-50)' },
+      el('div', { style: 'font-weight:700;color:var(--c-warning)' }, 'Supabase not configured'),
+      el('div', { class: 'muted' }, 'Edit supabase-config.js with your project URL + anon key.')
+    ));
+  }
+  return wrap;
+}
+
+function viewSignInForm() {
   const form = el('form', {
     class: 'card',
     onsubmit: async (e) => {
@@ -725,8 +846,9 @@ function viewLogin() {
       const btn = form.querySelector('button[type=submit]');
       btn.disabled = true; btn.textContent = 'Signing in…';
       try {
-        const u = await Auth.login(mobile, password);
+        const u = await Auth.signIn(mobile, password);
         App.user = u; App.route = u.role; App.tab = 'home'; App.detail = null;
+        Store.subscribeRealtime();
         toast('Welcome, ' + u.name, 'success');
         render();
       } catch (err) {
@@ -738,40 +860,148 @@ function viewLogin() {
   form.appendChild(el('div', { class: 'field' },
     el('label', null, 'Mobile number'),
     el('input', { type: 'tel', name: 'mobile', required: true,
-      placeholder: '10-digit mobile', maxlength: 10, inputmode: 'numeric' })
+      placeholder: '10-digit mobile', maxlength: 10, inputmode: 'numeric', autocomplete: 'tel' })
   ));
   form.appendChild(el('div', { class: 'field' },
     el('label', null, 'Password'),
-    el('input', { type: 'password', name: 'password', required: true, placeholder: 'Password' })
+    el('input', { type: 'password', name: 'password', required: true, placeholder: 'Your password',
+      autocomplete: 'current-password' })
   ));
   form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign in'));
-  wrap.appendChild(form);
+  return form;
+}
 
-  wrap.appendChild(el('div', { class: 'card' },
-    el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Demo accounts (password: 1234)'),
-    demoUserRow('admin',      '9999999999', 'Bada Seth (Admin)'),
-    demoUserRow('contractor', '8888888888', 'Chhota Seth (Contractor)'),
-    demoUserRow('worker',     '7777777777', 'Darzi Ramesh (Worker)')
-  ));
+function viewSignUpForm(role) {
+  const wrap = el('div');
+
+  // Role picker
+  const rolePicker = el('div', { class: 'card' },
+    el('div', { class: 'muted', style: 'margin-bottom:8px;font-size:13px' }, 'I am a…'),
+    el('div', { class: 'row gap-12' },
+      roleBtn('admin',      'Bada Seth',   '👔', role),
+      roleBtn('contractor', 'Chhota Seth', '🧑‍🔧', role),
+      roleBtn('worker',     'Darzi',       '✂️', role)
+    )
+  );
+  wrap.appendChild(rolePicker);
+
+  if (role === 'admin')        wrap.appendChild(signupAdminForm());
+  else if (role === 'contractor') wrap.appendChild(signupContractorForm());
+  else if (role === 'worker')     wrap.appendChild(signupWorkerForm());
   return wrap;
 }
 
-function demoUserRow(role, mobile, name) {
-  return el('div', { class: 'list-item', onclick: async () => {
-    try {
-      const u = await Auth.login(mobile, '1234');
-      App.user = u; App.route = u.role; App.tab = 'home'; App.detail = null;
-      toast('Welcome, ' + u.name, 'success');
-      render();
-    } catch (e) { toast(e.message, 'error'); }
-  } },
-    el('div', { class: 'avatar' }, name.slice(0, 1)),
-    el('div', { class: 'meta' },
-      el('div', { class: 'name' }, name),
-      el('div', { class: 'sub' }, mobile)
-    ),
-    el('span', { class: 'role-pill ' + role }, role)
+function roleBtn(roleKey, label, ico, current) {
+  return el('button', {
+    type: 'button',
+    class: 'btn sm ' + (current === roleKey ? '' : 'ghost'),
+    style: 'flex:1;flex-direction:column;height:auto;padding:10px 4px',
+    onclick: () => { App._signupRole = roleKey; render(); }
+  },
+    el('div', { style: 'font-size:20px' }, ico),
+    el('div', null, label)
   );
+}
+
+function signupAdminForm() {
+  const form = el('form', {
+    class: 'card',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const btn = form.querySelector('button[type=submit]');
+      btn.disabled = true; btn.textContent = 'Creating…';
+      try {
+        await Auth.signUpAdmin({
+          name: fd.get('name'), mobile: fd.get('mobile'),
+          password: fd.get('password'), shop_name: fd.get('shop_name')
+        });
+        const me = Auth.current();
+        App.user = me; App.route = me.role; App.tab = 'home'; App.detail = null;
+        Store.subscribeRealtime();
+        toast('Karkhana created — welcome, ' + me.name, 'success');
+        render();
+      } catch (err) {
+        toast(err.message || 'Sign up failed', 'error');
+        btn.disabled = false; btn.textContent = 'Create karkhana';
+      }
+    }
+  });
+  form.appendChild(el('h3', null, 'Create your karkhana'));
+  form.appendChild(field('Your name', input('name', { required: true, placeholder: 'Full name' })));
+  form.appendChild(field('Karkhana name', input('shop_name', { required: true, placeholder: 'e.g. Sharma Garments' })));
+  form.appendChild(field('Your mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit', autocomplete: 'tel' })));
+  form.appendChild(field('Password', input('password', { required: true, type: 'password', minlength: 6, placeholder: '6+ characters', autocomplete: 'new-password' })));
+  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Create karkhana'));
+  return form;
+}
+
+function signupContractorForm() {
+  const form = el('form', {
+    class: 'card',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const btn = form.querySelector('button[type=submit]');
+      btn.disabled = true; btn.textContent = 'Creating…';
+      try {
+        await Auth.signUpContractor({
+          name: fd.get('name'), mobile: fd.get('mobile'),
+          password: fd.get('password'), admin_mobile: fd.get('admin_mobile')
+        });
+        const me = Auth.current();
+        App.user = me; App.route = me.role; App.tab = 'home'; App.detail = null;
+        Store.subscribeRealtime();
+        toast('Welcome, ' + me.name, 'success');
+        render();
+      } catch (err) {
+        toast(err.message || 'Sign up failed', 'error');
+        btn.disabled = false; btn.textContent = 'Sign up as Chhota Seth';
+      }
+    }
+  });
+  form.appendChild(el('h3', null, 'Sign up as Chhota Seth'));
+  form.appendChild(field('Your name', input('name', { required: true, placeholder: 'Full name' })));
+  form.appendChild(field('Your mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit', autocomplete: 'tel' })));
+  form.appendChild(field('Password', input('password', { required: true, type: 'password', minlength: 6, placeholder: '6+ characters', autocomplete: 'new-password' })));
+  form.appendChild(field('Bada Seth\'s mobile', input('admin_mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: 'Admin\'s 10-digit mobile' }),
+    'They must already be signed up.'));
+  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign up as Chhota Seth'));
+  return form;
+}
+
+function signupWorkerForm() {
+  const form = el('form', {
+    class: 'card',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const btn = form.querySelector('button[type=submit]');
+      btn.disabled = true; btn.textContent = 'Creating…';
+      try {
+        await Auth.signUpWorker({
+          name: fd.get('name'), mobile: fd.get('mobile'),
+          password: fd.get('password'), contractor_mobile: fd.get('contractor_mobile')
+        });
+        const me = Auth.current();
+        App.user = me; App.route = me.role; App.tab = 'home'; App.detail = null;
+        Store.subscribeRealtime();
+        toast('Welcome, ' + me.name, 'success');
+        render();
+      } catch (err) {
+        toast(err.message || 'Sign up failed', 'error');
+        btn.disabled = false; btn.textContent = 'Sign up as Darzi';
+      }
+    }
+  });
+  form.appendChild(el('h3', null, 'Sign up as Darzi'));
+  form.appendChild(field('Your name', input('name', { required: true, placeholder: 'Full name' })));
+  form.appendChild(field('Your mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit', autocomplete: 'tel' })));
+  form.appendChild(field('Password', input('password', { required: true, type: 'password', minlength: 6, placeholder: '6+ characters', autocomplete: 'new-password' })));
+  form.appendChild(field('Chhota Seth\'s mobile', input('contractor_mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: 'Contractor\'s 10-digit mobile' }),
+    'They must already be signed up.'));
+  form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign up as Darzi'));
+  return form;
 }
 
 /* ─── Topbar / detail topbar ──────────────────────────────── */
@@ -784,9 +1014,10 @@ function topbar(title, subtitle, opts = {}) {
     : null;
   const right = opts.action || el('button', {
       class: 'icon-btn', title: 'Logout', 'aria-label': 'Logout',
-      onclick: () => {
+      onclick: async () => {
         if (!confirm('Sign out?')) return;
-        Auth.logout(); App.user = null; App.route = 'login'; App.detail = null;
+        await Auth.signOut();
+        App.user = null; App.route = 'login'; App.detail = null;
         render();
       }
     }, '⎋');
@@ -1975,13 +2206,26 @@ function chipText(s) { return (s || '').replace('_', ' '); }
 
 /* ─── Bootstrap ───────────────────────────────────────────── */
 async function bootstrap() {
-  await Store.load();
-  await Auth.ensureSeedPasswords();
+  await Store.load();   // cache → remote (if session)
+
+  // If Supabase is configured and there's a stale local session without a
+  // matching Supabase Auth session, clear it (e.g. coming from old demo mode).
+  if (REMOTE_ENABLED && Store.data.session) {
+    try {
+      const { data: sess } = await sb.auth.getSession();
+      if (!sess?.session) {
+        Store.data = seed();
+        Store.saveCache();
+      }
+    } catch {}
+  }
+
   App.user = Auth.current();
   App.route = App.user ? App.user.role : 'login';
   App.tab = 'home';
   App.detail = null;
   render();
+  if (App.user) Store.subscribeRealtime();
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
 

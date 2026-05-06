@@ -220,10 +220,13 @@ end $$;
 -- SHOPS
 create policy shops_select on shops for select
   using (id = current_shop_id());
+create policy shops_self_insert on shops for insert
+  with check (owner_user_id = auth.uid()::text);
 create policy shops_update on shops for update
   using (id = current_shop_id() and current_role_in_shop() = 'admin');
 
 -- USERS
+-- Self-signup: a freshly-authenticated user can create exactly their own row.
 create policy users_select on users for select
   using (
     -- everyone in same shop, plus contractors a worker is under, plus admin always visible
@@ -232,12 +235,14 @@ create policy users_select on users for select
     or (current_role_in_shop() = 'contractor' and parent_user_id = auth.uid()::text)
     or (current_role_in_shop() = 'worker' and id = (select parent_user_id from users where id = auth.uid()::text))
     or role = 'admin'
+    -- Look-up by mobile during signup: anyone can find an admin or contractor by mobile.
+    -- Required so contractor/worker signup can resolve the parent's id from their mobile.
+    or role in ('admin','contractor')
   );
-create policy users_insert on users for insert
-  with check (
-    current_role_in_shop() = 'admin'
-    or (current_role_in_shop() = 'contractor' and role = 'worker' and parent_user_id = auth.uid()::text)
-  );
+create policy users_self_insert on users for insert
+  with check (id = auth.uid()::text);
+create policy users_admin_insert on users for insert
+  with check (current_role_in_shop() = 'admin');
 create policy users_update on users for update
   using (
     current_role_in_shop() = 'admin'
@@ -248,6 +253,10 @@ create policy users_update on users for update
 -- ADMIN_CONTRACTORS
 create policy ac_select on admin_contractors for select
   using (admin_id = auth.uid()::text or contractor_id = auth.uid()::text);
+-- Either side of the relationship can insert (contractor signs up + links to admin
+-- by entering admin's mobile; or admin pre-links a contractor that signed up).
+create policy ac_self_insert on admin_contractors for insert
+  with check (admin_id = auth.uid()::text or contractor_id = auth.uid()::text);
 create policy ac_admin_write on admin_contractors for all
   using (admin_id = auth.uid()::text and current_role_in_shop() = 'admin')
   with check (admin_id = auth.uid()::text and current_role_in_shop() = 'admin');
@@ -361,6 +370,23 @@ select
 from worker_assignments wa
 left join production_entries pe on pe.assignment_id = wa.id
 group by wa.id;
+
+-- ============================================================
+-- 7. Realtime — let supabase-js subscribe to changes on these tables
+-- ============================================================
+do $$
+declare t text;
+begin
+  for t in select unnest(array[
+    'shops','users','admin_contractors','designs','piece_types',
+    'orders','lots','worker_assignments','production_entries',
+    'payments','notifications','holidays'
+  ]) loop
+    begin execute format('alter publication supabase_realtime add table %I', t);
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
 
 create or replace view v_worker_balance as
 select
