@@ -113,7 +113,22 @@ const Store = {
     // Ensure all collections exist on older caches
     const d = this.data;
     ['users','designs','piece_types','orders','lots','worker_assignments',
-     'production_entries','payments','notifications','holidays'].forEach(k => { if (!d[k]) d[k] = []; });
+     'production_entries','payments','notifications','holidays',
+     'admin_contractors'].forEach(k => { if (!d[k]) d[k] = []; });
+    // v2 migration: contractors used to have parent_user_id pointing at one admin.
+    // Promote those into the admin_contractors junction so it's many-to-many.
+    if (d.admin_contractors.length === 0) {
+      d.users.filter(u => u.role === 'contractor' && u.parent_user_id).forEach(c => {
+        const admin = d.users.find(x => x.id === c.parent_user_id);
+        if (!admin || admin.role !== 'admin') return;
+        d.admin_contractors.push({
+          id: 'ac_' + c.id + '_' + admin.id,
+          admin_id: admin.id, contractor_id: c.id,
+          status: 'active', since: today(), notes: null,
+          created_at: new Date().toISOString()
+        });
+      });
+    }
   },
   saveCache() { try { localStorage.setItem(this.KEY, JSON.stringify(this.data)); } catch {} },
 
@@ -160,22 +175,43 @@ function seed() {
 
   const tNow = new Date().toISOString();
 
+  const admin2Id = 'u_admin2';
+  const con2Id = 'u_contractor2';
+
   return {
     session: null,
+    // First admin's shop. Each admin runs their own shop.
     shop: {
       id: shopId, name: 'Demo Karkhana', owner_user_id: adminId,
       address: 'Plot 12, Industrial Area', phone: '9999999999',
       upi_id: 'demo@upi', upi_name: 'Demo Karkhana'
     },
+    shops: [
+      { id: shopId, name: 'Demo Karkhana', owner_user_id: adminId,
+        address: 'Plot 12, Industrial Area', phone: '9999999999',
+        upi_id: 'demo@upi', upi_name: 'Demo Karkhana' },
+      { id: 'shop_demo2', name: 'Sharma Garments', owner_user_id: admin2Id,
+        address: 'Mandi Road', phone: '9999999998', upi_id: '', upi_name: '' }
+    ],
     users: [
       { id: adminId, shop_id: shopId, mobile: '9999999999', name: 'Bada Seth (Admin)',
         role: 'admin', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
-      { id: conId, shop_id: shopId, mobile: '8888888888', name: 'Chhota Seth (Contractor)',
-        role: 'contractor', password_hash: null, parent_user_id: adminId, photo: null, status: 'active', created_at: tNow },
-      { id: workerId, shop_id: shopId, mobile: '7777777777', name: 'Darzi Ramesh',
+      { id: admin2Id, shop_id: 'shop_demo2', mobile: '9999999998', name: 'Sharma Bada Seth',
+        role: 'admin', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
+      { id: conId, shop_id: null, mobile: '8888888888', name: 'Chhota Seth (Contractor)',
+        role: 'contractor', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
+      { id: con2Id, shop_id: null, mobile: '8888888887', name: 'Verma Chhota Seth',
+        role: 'contractor', password_hash: null, parent_user_id: null, photo: null, status: 'active', created_at: tNow },
+      { id: workerId, shop_id: null, mobile: '7777777777', name: 'Darzi Ramesh',
         role: 'worker', password_hash: null, parent_user_id: conId, photo: null, status: 'active', created_at: tNow },
-      { id: workerId2, shop_id: shopId, mobile: '7777777778', name: 'Darzi Suresh',
+      { id: workerId2, shop_id: null, mobile: '7777777778', name: 'Darzi Suresh',
         role: 'worker', password_hash: null, parent_user_id: conId, photo: null, status: 'active', created_at: tNow }
+    ],
+    admin_contractors: [
+      // Demo: contractor1 works for both admins; contractor2 works only for admin2
+      { id: 'ac1', admin_id: adminId,  contractor_id: conId,  status: 'active', since: today(), notes: null, created_at: tNow },
+      { id: 'ac2', admin_id: admin2Id, contractor_id: conId,  status: 'active', since: today(), notes: null, created_at: tNow },
+      { id: 'ac3', admin_id: admin2Id, contractor_id: con2Id, status: 'active', since: today(), notes: null, created_at: tNow }
     ],
     designs: [
       { id: dShirtId, shop_id: shopId, name: 'Formal Shirt', sku: 'SH-001', photo: null,
@@ -412,7 +448,8 @@ const Domain = {
 
   /* Users */
   userById(id) { return Store.data.users.find(u => u.id === id); },
-  contractors() { return Store.data.users.filter(u => u.role === 'contractor'); },
+  admins() { return Store.data.users.filter(u => u.role === 'admin'); },
+  allContractors() { return Store.data.users.filter(u => u.role === 'contractor'); },
   workers() { return Store.data.users.filter(u => u.role === 'worker'); },
   workersForContractor(contractorId) {
     return Store.data.users.filter(u => u.role === 'worker' && u.parent_user_id === contractorId);
@@ -420,10 +457,82 @@ const Domain = {
   lotsForContractor(contractorId) {
     return Store.data.lots.filter(l => l.contractor_id === contractorId);
   },
+
+  /* Admin ↔ Contractor (many-to-many) */
+  adminContractorLinks() { return Store.data.admin_contractors || []; },
+  contractorsForAdmin(adminId) {
+    const ids = new Set(this.adminContractorLinks()
+      .filter(ac => ac.admin_id === adminId && ac.status !== 'ended')
+      .map(ac => ac.contractor_id));
+    return this.allContractors().filter(c => ids.has(c.id));
+  },
+  adminsForContractor(contractorId) {
+    const ids = new Set(this.adminContractorLinks()
+      .filter(ac => ac.contractor_id === contractorId && ac.status !== 'ended')
+      .map(ac => ac.admin_id));
+    return this.admins().filter(a => ids.has(a.id));
+  },
+  // Used in admin's flow: "+ Add contractor" — they pick an existing one to link.
+  contractorsAvailableToLink(adminId) {
+    const linked = new Set(this.contractorsForAdmin(adminId).map(c => c.id));
+    return this.allContractors().filter(c => !linked.has(c.id));
+  },
+  linkAdminContractor(adminId, contractorId, notes) {
+    if (this.adminContractorLinks().some(ac =>
+      ac.admin_id === adminId && ac.contractor_id === contractorId && ac.status !== 'ended')) {
+      throw new Error('Already linked');
+    }
+    Store.data.admin_contractors.push({
+      id: uid('ac'), admin_id: adminId, contractor_id: contractorId,
+      status: 'active', since: today(),
+      notes: (notes || '').trim() || null,
+      created_at: new Date().toISOString()
+    });
+    Store.save();
+  },
+  unlinkAdminContractor(adminId, contractorId) {
+    const link = this.adminContractorLinks().find(ac =>
+      ac.admin_id === adminId && ac.contractor_id === contractorId && ac.status !== 'ended');
+    if (link) { link.status = 'ended'; Store.save(); }
+  },
+  // Lots assigned by a specific admin to a specific contractor
+  lotsForAdminContractor(adminId, contractorId) {
+    return Store.data.lots.filter(l => l.contractor_id === contractorId && l.shop_id === this.adminShopId(adminId));
+  },
+  lotsForShop(shopId) {
+    return Store.data.lots.filter(l => l.shop_id === shopId);
+  },
+  // Workers under contractors that this admin is engaged with.
+  workersForAdmin(adminId) {
+    const cIds = new Set(this.contractorsForAdmin(adminId).map(c => c.id));
+    return this.workers().filter(w => cIds.has(w.parent_user_id));
+  },
+  // Production entries against lots in this admin's shop.
+  entriesForAdmin(adminId, fromDate, toDate) {
+    const shopId = this.adminShopId(adminId);
+    return Store.data.production_entries.filter(e => {
+      const a = this.assignmentById(e.assignment_id);
+      const lot = a ? this.lotById(a.lot_id) : null;
+      if (!lot || lot.shop_id !== shopId) return false;
+      return (!fromDate || e.date >= fromDate) && (!toDate || e.date <= toDate);
+    });
+  },
+  ordersForAdmin(adminId) {
+    const shopId = this.adminShopId(adminId);
+    return this.orders().filter(o => o.shop_id === shopId);
+  },
+  adminShopId(adminId) {
+    const a = this.userById(adminId);
+    return a?.shop_id || null;
+  },
+  shopById(id) {
+    return (Store.data.shops || [Store.data.shop]).find(s => s.id === id);
+  },
+
   async addUser({ name, mobile, role, parent_user_id, password }) {
     if (Store.data.users.some(u => u.mobile === mobile)) throw new Error('Mobile already registered');
     const u = {
-      id: uid('u'), shop_id: Store.data.shop.id,
+      id: uid('u'), shop_id: role === 'admin' ? Store.data.shop.id : null,
       mobile: mobile.trim(), name: name.trim(), role,
       password_hash: await hashPassword(password || '1234'),
       parent_user_id: parent_user_id || null, photo: null,
@@ -432,6 +541,19 @@ const Domain = {
     Store.data.users.push(u);
     Store.save();
     return u;
+  },
+  // Used by admin: create a new contractor AND link them in one go.
+  async addContractorForAdmin({ name, mobile, password, adminId, notes }) {
+    const c = await this.addUser({ name, mobile, role: 'contractor', password });
+    this.linkAdminContractor(adminId, c.id, notes);
+    return c;
+  },
+  // Used by admin: link an existing contractor by mobile.
+  linkContractorByMobile(adminId, mobile, notes) {
+    const c = Store.data.users.find(u => u.role === 'contractor' && u.mobile === mobile.trim());
+    if (!c) throw new Error('No contractor found with that mobile');
+    this.linkAdminContractor(adminId, c.id, notes);
+    return c;
   },
 
   /* Payments */
@@ -571,8 +693,9 @@ function roleTabs(role) {
   ];
   if (role === 'contractor') return [
     { key: 'home',     ico: '🏠', label: 'Home' },
-    { key: 'lots',     ico: '📦', label: 'My Lots' },
+    { key: 'lots',     ico: '📦', label: 'Lots' },
     { key: 'workers',  ico: '👷', label: 'Workers' },
+    { key: 'admins',   ico: '🏢', label: 'Bada Seths' },
     { key: 'payments', ico: '💸', label: 'Payments' }
   ];
   if (role === 'worker') return [
@@ -743,14 +866,18 @@ function renderAdminDetail(wrap) {
 }
 
 function adminHome(wrap) {
-  const orders = Domain.orders();
+  const orders = Domain.ordersForAdmin(App.user.id);
   const inProgress = orders.filter(o => o.status === 'in_progress').length;
-  const totalLotQty = Store.data.lots.reduce((s, l) => s + l.qty, 0);
-  const totalDone = Store.data.production_entries.reduce((s, e) => s + e.pieces_done, 0);
-  const contractors = Domain.contractors();
-  const workers = Domain.workers();
+  const myLots = Domain.lotsForShop(Domain.adminShopId(App.user.id));
+  const totalLotQty = myLots.reduce((s, l) => s + l.qty, 0);
+  const myEntries = Domain.entriesForAdmin(App.user.id);
+  const totalDone = myEntries.reduce((s, e) => s + e.pieces_done, 0);
+  const contractors = Domain.contractorsForAdmin(App.user.id);
+  const workers = Domain.workersForAdmin(App.user.id);
+  // payments admin tracks: by contractors I work with, to their workers
+  const cIds = new Set(contractors.map(c => c.id));
   const totalPaid = Store.data.payments
-    .filter(p => ['settlement','advance','bonus'].includes(p.type))
+    .filter(p => cIds.has(p.payer_id) && ['settlement','advance','bonus'].includes(p.type))
     .reduce((s, p) => s + Number(p.amount), 0);
 
   wrap.appendChild(el('div', { class: 'stats' },
@@ -767,7 +894,7 @@ function adminHome(wrap) {
   wrap.appendChild(el('div', { class: 'card' },
     el('div', { class: 'col' },
       el('button', { class: 'btn full', onclick: () => openModal(addOrderForm()) }, '+ New bulk order'),
-      el('button', { class: 'btn secondary full', onclick: () => openModal(addUserForm({ role: 'contractor' })) }, '+ Add contractor'),
+      el('button', { class: 'btn secondary full', onclick: () => openModal(addContractorForAdminForm()) }, '+ Add contractor'),
       el('button', { class: 'btn secondary full', onclick: () => openModal(addDesignForm()) }, '+ Add design')
     )
   ));
@@ -782,7 +909,7 @@ function adminOrders(wrap) {
   wrap.appendChild(sectionH('Bulk orders',
     el('button', { class: 'btn sm', onclick: () => openModal(addOrderForm()) }, '+ New')
   ));
-  const orders = Domain.orders().slice().reverse();
+  const orders = Domain.ordersForAdmin(App.user.id).slice().reverse();
   if (orders.length === 0) {
     wrap.appendChild(emptyState('📋', 'No orders yet', '+ Create first order',
       () => openModal(addOrderForm())));
@@ -863,20 +990,23 @@ function lotListItem(l) {
 }
 
 function adminContractors(wrap) {
-  wrap.appendChild(sectionH('Contractors',
-    el('button', { class: 'btn sm', onclick: () => openModal(addUserForm({ role: 'contractor' })) }, '+ Add')
+  wrap.appendChild(sectionH('My contractors',
+    el('button', { class: 'btn sm', onclick: () => openModal(addContractorForAdminForm()) }, '+ Add')
   ));
-  const list = Domain.contractors();
+  const list = Domain.contractorsForAdmin(App.user.id);
   if (list.length === 0) {
-    wrap.appendChild(emptyState('👥', 'No contractors yet', '+ Add contractor',
-      () => openModal(addUserForm({ role: 'contractor' }))));
+    wrap.appendChild(emptyState('👥', 'No contractors linked yet', '+ Add contractor',
+      () => openModal(addContractorForAdminForm())));
     return;
   }
   list.forEach(c => wrap.appendChild(contractorListItem(c)));
 }
 
 function contractorListItem(c) {
-  const lots = Domain.lotsForContractor(c.id);
+  // For admin viewer, scope lots to the admin's shop only.
+  const lots = App.user.role === 'admin'
+    ? Domain.lotsForAdminContractor(App.user.id, c.id)
+    : Domain.lotsForContractor(c.id);
   const workers = Domain.workersForContractor(c.id);
   const balance = Domain.contractorBalanceToPay(c.id);
   return el('div', { class: 'list-item', onclick: () => goDetail('contractor', c.id) },
@@ -894,14 +1024,37 @@ function contractorListItem(c) {
 function adminContractorDetail(wrap) {
   const c = Domain.userById(App.detail.id);
   if (!c) { wrap.appendChild(emptyState('❓', 'Contractor not found', 'Back', goBack)); return wrap; }
-  const lots = Domain.lotsForContractor(c.id);
+  // Scope to lots from THIS admin's shop only.
+  const lots = Domain.lotsForAdminContractor(App.user.id, c.id);
   const workers = Domain.workersForContractor(c.id);
+  const myShopId = Domain.adminShopId(App.user.id);
   const totalDone = Domain.assignmentsForContractor(c.id)
+    .filter(a => Domain.lotById(a.lot_id)?.shop_id === myShopId)
     .reduce((s, a) => s + Domain.assignmentPiecesDone(a.id), 0);
   const totalEarnedByWorkers = workers.reduce((s, w) => s + Domain.workerEarned(w.id), 0);
   const balance = Domain.contractorBalanceToPay(c.id);
 
-  wrap.appendChild(topbar(c.name, c.mobile, { back: true }));
+  // Other admins this contractor also works for
+  const otherAdmins = Domain.adminsForContractor(c.id).filter(a => a.id !== App.user.id);
+
+  wrap.appendChild(topbar(c.name, c.mobile, { back: true,
+    action: el('button', {
+      class: 'icon-btn', title: 'Unlink',
+      onclick: () => {
+        if (!confirm('Unlink ' + c.name + ' from your shop? Their lots stay; future ones won\'t list them.')) return;
+        Domain.unlinkAdminContractor(App.user.id, c.id);
+        toast('Unlinked', 'success');
+        goBack();
+      }
+    }, '⊘')
+  }));
+
+  if (otherAdmins.length > 0) {
+    wrap.appendChild(el('div', { class: 'card', style: 'background: var(--c-primary-50); border-color: transparent;' },
+      el('div', { class: 'muted', style: 'font-size:12px' }, 'Also works for'),
+      el('div', null, otherAdmins.map(a => a.name).join(' · '))
+    ));
+  }
 
   wrap.appendChild(el('div', { class: 'stats' },
     stat('Lots', lots.length, 'primary'),
@@ -955,9 +1108,9 @@ function designListItem(d) {
 }
 
 function adminReports(wrap) {
-  // Simple last-7-days aggregate
+  // Last-7-days aggregate, scoped to this admin's shop
   const from = Domain.weekStart();
-  const all = Store.data.production_entries.filter(e => e.date >= from);
+  const all = Domain.entriesForAdmin(App.user.id, from);
   const totalPieces = all.reduce((s, e) => s + e.pieces_done, 0);
   const earned = all.reduce((s, e) => {
     const a = Domain.assignmentById(e.assignment_id);
@@ -1004,6 +1157,7 @@ function viewContractor() {
     home: 'Chhota Seth · ' + App.user.name,
     lots: 'My Lots',
     workers: 'Workers',
+    admins: 'Bada Seths',
     payments: 'Payments'
   };
   wrap.appendChild(topbar('KarkhanaPro', titles[App.tab] || ''));
@@ -1011,8 +1165,32 @@ function viewContractor() {
   if (App.tab === 'home')          contractorHome(wrap);
   else if (App.tab === 'lots')     contractorLots(wrap);
   else if (App.tab === 'workers')  contractorWorkers(wrap);
+  else if (App.tab === 'admins')   contractorAdmins(wrap);
   else if (App.tab === 'payments') contractorPayments(wrap);
   return wrap;
+}
+
+function contractorAdmins(wrap) {
+  const admins = Domain.adminsForContractor(App.user.id);
+  if (admins.length === 0) {
+    wrap.appendChild(emptyState('🏢', 'No Bada Seths linked. They can find you by your mobile number.'));
+    return;
+  }
+  admins.forEach(a => {
+    const lots = Domain.lotsForAdminContractor(a.id, App.user.id);
+    const totalQty = lots.reduce((s, l) => s + l.qty, 0);
+    const inProgress = lots.filter(l => l.status === 'in_progress' || l.status === 'assigned').length;
+    const shop = Domain.shopById(a.shop_id);
+    wrap.appendChild(el('div', { class: 'list-item' },
+      el('div', { class: 'avatar' }, a.name.slice(0,1)),
+      el('div', { class: 'meta' },
+        el('div', { class: 'name' }, a.name),
+        el('div', { class: 'sub' },
+          (shop?.name || 'Shop') + ' · ' + lots.length + ' lots · ' + totalQty + ' pcs · ' + inProgress + ' active'
+        )
+      )
+    ));
+  });
 }
 
 function renderContractorDetail(wrap) {
@@ -1024,6 +1202,7 @@ function renderContractorDetail(wrap) {
 function contractorHome(wrap) {
   const lots = Domain.lotsForContractor(App.user.id);
   const workers = Domain.workersForContractor(App.user.id);
+  const admins = Domain.adminsForContractor(App.user.id);
   const todayEntries = Store.data.production_entries.filter(e => e.contractor_id === App.user.id && e.date === today());
   const piecesToday = todayEntries.reduce((s, e) => s + e.pieces_done, 0);
   const balance = Domain.contractorBalanceToPay(App.user.id);
@@ -1031,8 +1210,9 @@ function contractorHome(wrap) {
   wrap.appendChild(el('div', { class: 'stats' },
     stat('My lots', lots.length, 'primary', () => goTab('lots')),
     stat('Workers', workers.length, 'success', () => goTab('workers')),
-    stat('Pieces today', piecesToday, 'accent'),
-    stat('To pay workers', fmtINR(balance))
+    stat('Bada Seths', admins.length, 'accent', () => goTab('admins')),
+    stat('Pieces today', piecesToday),
+    stat('To pay workers', fmtINR(balance), 'accent')
   ));
 
   wrap.appendChild(sectionH('Quick actions'));
@@ -1410,6 +1590,99 @@ function addDesignForm() {
   return form;
 }
 
+/* — Admin: add or link contractor — */
+function addContractorForAdminForm() {
+  const available = Domain.contractorsAvailableToLink(App.user.id);
+
+  const wrap = el('div');
+  wrap.appendChild(el('h2', null, 'Add contractor'));
+
+  // Tab toggle: "Link existing" vs "Create new"
+  let mode = available.length > 0 ? 'link' : 'new';
+  const tabs = el('div', { class: 'row gap-12 mb-12', style: 'border-bottom:1px solid var(--c-border);padding-bottom:8px' });
+  const tabLink = el('button', {
+    type: 'button', class: 'btn ghost sm', onclick: () => { mode = 'link'; render(); }
+  }, 'Link existing');
+  const tabNew = el('button', {
+    type: 'button', class: 'btn ghost sm', onclick: () => { mode = 'new'; render(); }
+  }, 'Create new');
+  tabs.appendChild(tabLink); tabs.appendChild(tabNew);
+  wrap.appendChild(tabs);
+
+  const content = el('div');
+  wrap.appendChild(content);
+
+  function render() {
+    content.innerHTML = '';
+    tabLink.className = 'btn sm ' + (mode === 'link' ? '' : 'ghost');
+    tabNew.className = 'btn sm ' + (mode === 'new' ? '' : 'ghost');
+
+    if (mode === 'link') {
+      content.appendChild(el('div', { class: 'muted', style: 'margin-bottom:8px' },
+        'Pick a contractor already in the system, or enter their mobile.'));
+      if (available.length > 0) {
+        content.appendChild(el('div', { style: 'margin-bottom:8px' },
+          ...available.map(c => el('div', { class: 'list-item', onclick: () => {
+            try {
+              Domain.linkAdminContractor(App.user.id, c.id);
+              toast('Linked ' + c.name, 'success');
+              closeModal(); window.KarkhanaPro.render();
+            } catch (e) { toast(e.message, 'error'); }
+          }},
+            el('div', { class: 'avatar' }, c.name.slice(0,1)),
+            el('div', { class: 'meta' },
+              el('div', { class: 'name' }, c.name),
+              el('div', { class: 'sub' }, c.mobile)
+            ),
+            el('div', { class: 'end' }, '+ Link')
+          ))
+        ));
+      }
+      // Or by mobile
+      const f = el('form', {
+        onsubmit: (e) => {
+          e.preventDefault();
+          const m = f.querySelector('input[name=mobile]').value.trim();
+          try {
+            const c = Domain.linkContractorByMobile(App.user.id, m);
+            toast('Linked ' + c.name, 'success');
+            closeModal(); window.KarkhanaPro.render();
+          } catch (err) { toast(err.message, 'error'); }
+        }
+      });
+      f.appendChild(el('div', { style: 'font-weight:600;margin:8px 0 4px' }, 'Or by mobile'));
+      f.appendChild(field('Contractor mobile', input('mobile', { type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit' })));
+      f.appendChild(el('button', { type: 'submit', class: 'btn full' }, 'Link by mobile'));
+      content.appendChild(f);
+    } else {
+      const f = el('form', {
+        onsubmit: async (e) => {
+          e.preventDefault();
+          const fd = new FormData(f);
+          try {
+            await Domain.addContractorForAdmin({
+              name: fd.get('name'), mobile: fd.get('mobile'),
+              password: fd.get('password') || '1234',
+              adminId: App.user.id, notes: fd.get('notes')
+            });
+            toast('Contractor created and linked', 'success');
+            closeModal(); window.KarkhanaPro.render();
+          } catch (err) { toast(err.message, 'error'); }
+        }
+      });
+      f.appendChild(field('Name', input('name', { required: true, placeholder: 'Full name' })));
+      f.appendChild(field('Mobile', input('mobile', { required: true, type: 'tel', maxlength: 10, inputmode: 'numeric', placeholder: '10-digit' })));
+      f.appendChild(field('Password', input('password', { type: 'text', value: '1234' }),
+        'They use this to log in.'));
+      f.appendChild(field('Note (optional)', el('textarea', { name: 'notes', rows: 2 })));
+      f.appendChild(submitButtons('Create + link'));
+      content.appendChild(f);
+    }
+  }
+  render();
+  return wrap;
+}
+
 /* — Add user (contractor or worker) — */
 function addUserForm({ role, parent_user_id }) {
   const form = el('form', {
@@ -1509,7 +1782,8 @@ function splitOrderForm(orderId) {
 }
 
 function assignLotInline(lot) {
-  const contractors = Domain.contractors();
+  // Only show contractors linked to the current admin
+  const contractors = Domain.contractorsForAdmin(App.user.id);
   const sel = selectField('lot_' + lot.id, [{ value: '', label: '— pick contractor —' }]
     .concat(contractors.map(c => ({ value: c.id, label: c.name }))));
   sel.addEventListener('change', () => {

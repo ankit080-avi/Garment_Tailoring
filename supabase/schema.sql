@@ -43,6 +43,19 @@ create table if not exists karkhana.users (
   unique (shop_id, mobile)
 );
 
+-- Many-to-many: an admin (Bada Seth) can have many contractors (Chhota Seth);
+-- a contractor can work for many admins. The "shop" concept is now per-admin.
+create table if not exists karkhana.admin_contractors (
+  id            text primary key,
+  admin_id      text not null references karkhana.users(id) on delete cascade,
+  contractor_id text not null references karkhana.users(id) on delete cascade,
+  status        text default 'active' check (status in ('active','paused','ended')),
+  since         date default current_date,
+  notes         text,
+  created_at    timestamptz not null default now(),
+  unique (admin_id, contractor_id)
+);
+
 create table if not exists karkhana.designs (
   id           text primary key,
   shop_id      text not null references karkhana.shops(id) on delete cascade,
@@ -152,6 +165,8 @@ create table if not exists karkhana.holidays (
 -- ============================================================
 create index if not exists kk_users_shop_idx       on karkhana.users(shop_id);
 create index if not exists kk_users_parent_idx     on karkhana.users(parent_user_id);
+create index if not exists kk_ac_admin_idx         on karkhana.admin_contractors(admin_id);
+create index if not exists kk_ac_contractor_idx    on karkhana.admin_contractors(contractor_id);
 create index if not exists kk_orders_shop_idx      on karkhana.orders(shop_id);
 create index if not exists kk_lots_order_idx       on karkhana.lots(order_id);
 create index if not exists kk_lots_contractor_idx  on karkhana.lots(contractor_id);
@@ -184,6 +199,7 @@ $$;
 -- ============================================================
 alter table karkhana.shops              enable row level security;
 alter table karkhana.users              enable row level security;
+alter table karkhana.admin_contractors  enable row level security;
 alter table karkhana.designs            enable row level security;
 alter table karkhana.piece_types        enable row level security;
 alter table karkhana.orders             enable row level security;
@@ -247,6 +263,18 @@ create policy users_update on karkhana.users for update
     )
   );
 
+-- ADMIN_CONTRACTORS:
+--  admin → rows where admin_id = me; can insert/update
+--  contractor → rows where contractor_id = me (read only)
+create policy ac_select on karkhana.admin_contractors for select
+  using (
+    (current_setting('request.jwt.claims', true)::jsonb ->> 'sub') is not null
+    and (admin_id = auth.uid()::text or contractor_id = auth.uid()::text)
+  );
+create policy ac_admin_write on karkhana.admin_contractors for all
+  using (admin_id = auth.uid()::text and karkhana.current_role_in_shop() = 'admin')
+  with check (admin_id = auth.uid()::text and karkhana.current_role_in_shop() = 'admin');
+
 -- DESIGNS
 create policy designs_select on karkhana.designs for select
   using (shop_id = karkhana.current_shop_id());
@@ -261,30 +289,26 @@ create policy piece_types_admin_write on karkhana.piece_types for all
   using (shop_id = karkhana.current_shop_id() and karkhana.current_role_in_shop() = 'admin')
   with check (shop_id = karkhana.current_shop_id() and karkhana.current_role_in_shop() = 'admin');
 
--- ORDERS
+-- ORDERS — admins see their shop; contractors see across shops where they have lots.
 create policy orders_select on karkhana.orders for select
   using (
-    shop_id = karkhana.current_shop_id()
-    and (
-      karkhana.current_role_in_shop() = 'admin'
-      or (karkhana.current_role_in_shop() = 'contractor'
-          and exists (select 1 from karkhana.lots l where l.order_id = orders.id and l.contractor_id = auth.uid()::text))
-    )
+    (karkhana.current_role_in_shop() = 'admin' and shop_id = karkhana.current_shop_id())
+    or
+    (karkhana.current_role_in_shop() = 'contractor'
+      and exists (select 1 from karkhana.lots l where l.order_id = orders.id and l.contractor_id = auth.uid()::text))
   );
 create policy orders_admin_write on karkhana.orders for all
   using (shop_id = karkhana.current_shop_id() and karkhana.current_role_in_shop() = 'admin')
   with check (shop_id = karkhana.current_shop_id() and karkhana.current_role_in_shop() = 'admin');
 
--- LOTS
+-- LOTS — admins: own shop; contractors: their lots regardless of shop;
+-- workers: lots they have assignments in.
 create policy lots_select on karkhana.lots for select
   using (
-    shop_id = karkhana.current_shop_id()
-    and (
-      karkhana.current_role_in_shop() = 'admin'
-      or contractor_id = auth.uid()::text
-      or (karkhana.current_role_in_shop() = 'worker'
-          and exists (select 1 from karkhana.worker_assignments wa where wa.lot_id = lots.id and wa.worker_id = auth.uid()::text))
-    )
+    (karkhana.current_role_in_shop() = 'admin' and shop_id = karkhana.current_shop_id())
+    or contractor_id = auth.uid()::text
+    or (karkhana.current_role_in_shop() = 'worker'
+        and exists (select 1 from karkhana.worker_assignments wa where wa.lot_id = lots.id and wa.worker_id = auth.uid()::text))
   );
 create policy lots_admin_write on karkhana.lots for all
   using (shop_id = karkhana.current_shop_id() and karkhana.current_role_in_shop() = 'admin')
