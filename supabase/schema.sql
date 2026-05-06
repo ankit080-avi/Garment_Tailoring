@@ -197,6 +197,15 @@ set search_path = public, pg_temp as $$
   select coalesce((select role from users where id = auth.uid()::text limit 1) = 'software_admin', false)
 $$;
 
+-- Used inside RLS policies that need to look at "my parent" without re-
+-- entering the policy (which causes infinite recursion). SECURITY DEFINER
+-- bypasses RLS for the inner select.
+create or replace function current_parent_user_id() returns text
+language sql stable security definer
+set search_path = public, pg_temp as $$
+  select parent_user_id from users where id = auth.uid()::text limit 1
+$$;
+
 -- Public RPC: lets the unauthenticated signup screen check whether the
 -- platform already has a software admin. Used to decide whether to
 -- promote the first signup. No personal data leaks.
@@ -261,7 +270,7 @@ create policy users_select on users for select
     or shop_id = current_shop_id()
     or id = auth.uid()::text
     or (current_role_in_shop() = 'contractor' and parent_user_id = auth.uid()::text)
-    or (current_role_in_shop() = 'worker' and id = (select parent_user_id from users where id = auth.uid()::text))
+    or (current_role_in_shop() = 'worker' and id = current_parent_user_id())
     -- Look-up by mobile during signup: anyone can find an admin or contractor by mobile.
     or role in ('admin','contractor','software_admin')
   );
