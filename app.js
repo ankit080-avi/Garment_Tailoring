@@ -251,6 +251,13 @@ const Store = {
           const { data, error } = await sb.from(t).select('*');
           if (!error && data) {
             this.data[t] = data;
+            // Re-bind App.user to the fresh row from this update so that
+            // status flips (pending → rejected/active) propagate to the UI
+            // instead of pinning the rendered screen to the stale object.
+            if (t === 'users' && App && App.user) {
+              const fresh = data.find(u => u.id === App.user.id);
+              if (fresh) App.user = fresh;
+            }
             this.saveCache();
             try { render(); } catch {}
           }
