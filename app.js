@@ -808,11 +808,35 @@ const Auth = {
 
   async signIn(mobile, password) {
     if (!sb) throw new Error('Supabase not configured');
-    const email = this.mobileToEmail(mobile);
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    const cleanMobile = String(mobile).trim();
+    const email = this.mobileToEmail(cleanMobile);
+    const isPlatformAdmin = SOFTWARE_ADMIN_MOBILE && cleanMobile === SOFTWARE_ADMIN_MOBILE;
+
+    let { data, error } = await sb.auth.signInWithPassword({ email, password });
+
+    // Bootstrap path: the very first time the software admin signs in, no
+    // auth row exists yet. Auto-create it (using the password they typed)
+    // so they don't have to do a separate signup step. Only triggers for
+    // SOFTWARE_ADMIN_MOBILE and only when the failure was "no such user".
+    if (error && isPlatformAdmin && /invalid login credentials/i.test(error.message)) {
+      const probe = await sb.from('users').select('id').eq('mobile', cleanMobile).maybeSingle();
+      if (!probe.data) {
+        const su = await sb.auth.signUp({ email, password });
+        if (su.error) throw new Error(prettyAuthError(su.error));
+        if (!su.data.session) throw new Error('Email confirmation is enabled. Disable it in Supabase Auth settings, then try again.');
+        const userId = su.data.user.id;
+        const ins = await sb.from('users').insert({
+          id: userId, shop_id: null, mobile: cleanMobile, name: 'Software Admin',
+          role: 'software_admin', status: 'active'
+        }).select().single();
+        if (ins.error) throw new Error('Could not bootstrap software admin: ' + ins.error.message);
+        if (!ins.data) throw new Error('Bootstrap blocked. Re-run supabase/schema.sql to refresh RLS policies.');
+        data = su.data; error = null;
+      }
+    }
+
     if (error) throw new Error(prettyAuthError(error));
 
-    // Pull profile + populate Store
     await Store.loadFromRemote();
     const me = Store.data.users.find(u => u.id === data.user.id);
     if (!me) throw new Error('Profile row missing. Please sign up again or contact support.');
