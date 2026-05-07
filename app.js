@@ -1004,11 +1004,37 @@ function goTab(tab) {
 function goDetail(type, id) { App.detail = { type, id }; render(); }
 function goBack() { App.detail = null; render(); }
 
+// Software admin's Pending tab is the most time-sensitive view in the app —
+// realtime can hiccup, the SW cache can be stale, the user might switch
+// networks. Run a quiet ticker that re-pulls every 5s while the tab is open
+// so new applications surface without anyone needing to tap refresh.
+let _pendingTicker = null;
+function startPendingTicker() {
+  stopPendingTicker();
+  _pendingTicker = setInterval(() => {
+    if (App.user && App.user.role === 'software_admin' && App.tab === 'pending' && REMOTE_ENABLED) {
+      Store.loadFromRemote().then(ok => { if (ok) render(); }).catch(() => {});
+    } else {
+      stopPendingTicker();
+    }
+  }, 5000);
+}
+function stopPendingTicker() {
+  if (_pendingTicker) { clearInterval(_pendingTicker); _pendingTicker = null; }
+}
+
 function render() {
   const view = $('#view');
   const tabbar = $('#tabbar');
   view.innerHTML = '';
   tabbar.innerHTML = '';
+
+  // Manage the pending-tab auto-refresh ticker.
+  if (App.user && App.user.role === 'software_admin' && App.tab === 'pending') {
+    if (!_pendingTicker) startPendingTicker();
+  } else {
+    stopPendingTicker();
+  }
 
   // Keep Store.data.shop in sync with the current user. Owners get their own
   // shop; software_admin / contractor / worker fall back to the first shop
