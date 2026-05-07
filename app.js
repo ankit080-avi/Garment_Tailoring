@@ -13,6 +13,7 @@
 const cfg = window.DARZIMATE_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public', SOFTWARE_ADMIN_MOBILE: '' };
 const SCHEMA = cfg.SCHEMA || 'public';
 const SOFTWARE_ADMIN_MOBILE = (cfg.SOFTWARE_ADMIN_MOBILE || '').trim();
+const SOFTWARE_ADMIN_PASSWORD = cfg.SOFTWARE_ADMIN_PASSWORD || '';
 let sb = null;
 const REMOTE_ENABLED = !!(cfg.URL && cfg.KEY && window.supabase && window.supabase.createClient);
 if (REMOTE_ENABLED) {
@@ -812,16 +813,21 @@ const Auth = {
     const email = this.mobileToEmail(cleanMobile);
     const isPlatformAdmin = SOFTWARE_ADMIN_MOBILE && cleanMobile === SOFTWARE_ADMIN_MOBILE;
 
-    let { data, error } = await sb.auth.signInWithPassword({ email, password });
+    // For the platform admin, ignore whatever was typed and always sign in
+    // with the hardcoded SOFTWARE_ADMIN_PASSWORD so the form is effectively
+    // one-tap once the row exists.
+    const effectivePw = isPlatformAdmin && SOFTWARE_ADMIN_PASSWORD
+      ? SOFTWARE_ADMIN_PASSWORD : password;
+    let { data, error } = await sb.auth.signInWithPassword({ email, password: effectivePw });
 
     // Bootstrap path: the very first time the software admin signs in, no
-    // auth row exists yet. Auto-create it (using the password they typed)
-    // so they don't have to do a separate signup step. Only triggers for
+    // auth row exists yet. Auto-create with the hardcoded default password
+    // so the credentials are predictable for handover. Only triggers for
     // SOFTWARE_ADMIN_MOBILE and only when the failure was "no such user".
     if (error && isPlatformAdmin && /invalid login credentials/i.test(error.message)) {
       const probe = await sb.from('users').select('id').eq('mobile', cleanMobile).maybeSingle();
       if (!probe.data) {
-        const su = await sb.auth.signUp({ email, password });
+        const su = await sb.auth.signUp({ email, password: effectivePw });
         if (su.error) throw new Error(prettyAuthError(su.error));
         if (!su.data.session) throw new Error('Email confirmation is enabled. Disable it in Supabase Auth settings, then try again.');
         const userId = su.data.user.id;
@@ -1147,15 +1153,26 @@ function viewSignInForm() {
       }
     }
   });
+  const mobileInput = el('input', { type: 'tel', name: 'mobile', required: true,
+    placeholder: '10-digit mobile', maxlength: 10, inputmode: 'numeric', autocomplete: 'tel' });
+  const passwordInput = el('input', { type: 'password', name: 'password', required: true,
+    placeholder: 'Your password', autocomplete: 'current-password' });
+
+  // Auto-fill the password when the software admin mobile is entered, so
+  // logging in as platform admin is one tap.
+  if (SOFTWARE_ADMIN_MOBILE && SOFTWARE_ADMIN_PASSWORD) {
+    mobileInput.addEventListener('input', () => {
+      if (mobileInput.value.trim() === SOFTWARE_ADMIN_MOBILE && !passwordInput.value) {
+        passwordInput.value = SOFTWARE_ADMIN_PASSWORD;
+      }
+    });
+  }
+
   form.appendChild(el('div', { class: 'field' },
-    el('label', null, 'Mobile number'),
-    el('input', { type: 'tel', name: 'mobile', required: true,
-      placeholder: '10-digit mobile', maxlength: 10, inputmode: 'numeric', autocomplete: 'tel' })
+    el('label', null, 'Mobile number'), mobileInput
   ));
   form.appendChild(el('div', { class: 'field' },
-    el('label', null, 'Password'),
-    el('input', { type: 'password', name: 'password', required: true, placeholder: 'Your password',
-      autocomplete: 'current-password' })
+    el('label', null, 'Password'), passwordInput
   ));
   form.appendChild(el('button', { type: 'submit', class: 'btn full lg' }, 'Sign in'));
   return form;
