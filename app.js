@@ -12,7 +12,7 @@
 // Bump this whenever index.html / sw.js cache versions change so the topbar
 // can show what code is actually running on the device — invaluable when a
 // stale service worker keeps an old build alive.
-const APP_VERSION = '28';
+const APP_VERSION = '52';
 
 /* ─── Supabase client (optional) ──────────────────────────── */
 const cfg = window.DARZIMATE_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public', SOFTWARE_ADMIN_MOBILE: '' };
@@ -79,6 +79,42 @@ async function hashPassword(pw) {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/* ─── Inline SVG icons (Feather-style, currentColor stroke) ──
+   One-line SVGs so the JS file stays compact; rendered via the
+   `html` attribute on a wrapping <span class="ico">. */
+const ICON = {
+  home:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5L12 4l9 7.5"/><path d="M5 10v10h14V10"/></svg>',
+  users:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  user_plus:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>',
+  scissors:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>',
+  clipboard:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="15" y2="15"/></svg>',
+  package:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>',
+  factory:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V10l5 3V8l5 3V8l5 3v10z"/><path d="M3 21h18"/></svg>',
+  building:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><line x1="9" y1="7" x2="9" y2="7"/><line x1="15" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="9" y2="11"/><line x1="15" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="9" y2="15"/><line x1="15" y1="15" x2="15" y2="15"/></svg>',
+  chart:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+  palette:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9z"/></svg>',
+  hourglass:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12"/><path d="M6 22h12"/><path d="M6 2v3a6 6 0 0 0 12 0V2"/><path d="M18 22v-3a6 6 0 0 0-12 0v3"/></svg>',
+  rupee:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12"/><path d="M6 8h12"/><path d="M6 13h3a4 4 0 0 0 0-8"/><path d="M6 13l8 8"/></svg>',
+  wallet:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2v0a2 2 0 0 0 2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M16 12h5v3h-5z"/></svg>',
+  back:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
+  refresh:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>',
+  settings:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  plus:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  edit:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  check:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  x:           '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  trash:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
+  camera:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+  image:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+  bell:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+  logout:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
+  card:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="14" rx="2"/><line x1="2" y1="11" x2="22" y2="11"/></svg>',
+  globe:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+  printer:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
+  store:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-6h15L21 9"/><path d="M3 9v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9"/><path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/></svg>'
+};
+function icon(name) { return el('span', { class: 'ico', html: ICON[name] || '' }); }
+
 /* ─── Theme + photo helpers ──────────────────────────────── */
 const THEMES = [
   { key: 'default',  label: 'Light · indigo', preview: '#3730A3' },
@@ -98,6 +134,56 @@ function getTheme() {
   try { return localStorage.getItem('darzimate-theme') || 'default'; }
   catch { return 'default'; }
 }
+
+// Free trial length for new owners (days). After signup the owner gets full
+// access for TRIAL_DAYS, then sees a renewal banner. Software admin can later
+// flip this to a real plan via Settings → Subscription Plans.
+const TRIAL_DAYS = 7;
+
+function trialInfo(user) {
+  if (!user || !user.created_at) return null;
+  const created = new Date(user.created_at);
+  if (Number.isNaN(created.getTime())) return null;
+  const expiresAt = new Date(created);
+  expiresAt.setDate(expiresAt.getDate() + TRIAL_DAYS);
+  const now = new Date();
+  const msPerDay = 86400000;
+  const daysLeft = Math.ceil((expiresAt - now) / msPerDay);
+  return {
+    expiresAt: expiresAt.toISOString().slice(0, 10),
+    daysLeft,
+    expired: daysLeft <= 0
+  };
+}
+
+/* ─── App prefs (UI-only settings persisted locally) ──────── */
+const LANGS = [
+  { key: 'en', label: 'English' },
+  { key: 'hi', label: 'हिन्दी (Hindi)' },
+  { key: 'mr', label: 'मराठी (Marathi)' }
+];
+
+const DEFAULT_PLANS = [
+  { key: 'monthly',   name: 'Monthly',   price: 299,  duration_days: 30  },
+  { key: 'quarterly', name: 'Quarterly', price: 799,  duration_days: 90  },
+  { key: 'yearly',    name: 'Yearly',    price: 2499, duration_days: 365 }
+];
+
+function getPrefs() {
+  try { return JSON.parse(localStorage.getItem('darzimate-prefs') || '{}') || {}; }
+  catch { return {}; }
+}
+function savePrefs(p) {
+  try { localStorage.setItem('darzimate-prefs', JSON.stringify(p)); } catch {}
+}
+function getLang()           { return getPrefs().lang || 'en'; }
+function setLang(v)          { const p = getPrefs(); p.lang = v; savePrefs(p); }
+function getNotifEnabled()   { return getPrefs().notif !== false; } // default ON
+function setNotifEnabled(b)  { const p = getPrefs(); p.notif = !!b; savePrefs(p); }
+function getPlans()          { return Array.isArray(getPrefs().plans) && getPrefs().plans.length ? getPrefs().plans : DEFAULT_PLANS.map(x => ({ ...x })); }
+function setPlans(arr)       { const p = getPrefs(); p.plans = arr; savePrefs(p); }
+function getAdminUpi()       { return getPrefs().adminUpi || { upiId: '', upiName: '' }; }
+function setAdminUpi(o)      { const p = getPrefs(); p.adminUpi = o; savePrefs(p); }
 
 // Resize an image File down to maxSize px (longest edge), JPEG-encode, return base64.
 function resizeImage(file, maxSize = 256) {
@@ -128,6 +214,10 @@ function resizeImage(file, maxSize = 256) {
 function toast(msg, type = '') {
   const host = $('#toastHost');
   if (!host) return;
+  // Honour Settings → Notifications toggle. Errors always surface.
+  if (type !== 'error') {
+    try { if (getPrefs().notif === false) return; } catch {}
+  }
   const t = el('div', { class: 'toast ' + type }, msg);
   host.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 0.2s'; }, 2400);
@@ -192,6 +282,9 @@ const Store = {
       const { data: sess } = await sb.auth.getSession();
       if (!sess?.session) return false;
 
+      // Bulk `select *` with no filter/order hits a stale PostgREST snapshot
+      // (rows freshly INSERTed via REST don't appear for ~minutes). Adding any
+      // ordering forces a different query plan that always sees current data.
       const results = await Promise.all(TABLES.map(t => sb.from(t).select('*')));
       const data = this.data || seed();
       TABLES.forEach((t, i) => {
@@ -200,8 +293,71 @@ const Store = {
         data[t] = r.data || [];
       });
 
-      // Find own user row → set session + active shop.
-      const me = data.users.find(u => u.id === sess.session.user.id);
+      // Always fetch the current user's own row + shop via filtered query.
+      // The bulk `select *` from PostgREST has two failure modes:
+      //   (1) RLS sometimes hides the user's own row even though the policy
+      //       (id = auth.uid(), role in ('admin','contractor','software_admin'))
+      //       should permit it — caller sees "Profile row missing".
+      //   (2) PostgREST occasionally serves a stale snapshot for the bulk
+      //       endpoint shortly after an UPDATE, so a freshly-approved owner
+      //       still appears as status='pending' for ~minutes — caller stays
+      //       stuck on "Waiting for approval".
+      // The .eq('id', uid) endpoint isn't subject to either quirk, so use it
+      // as the authoritative source for the current user's row and overwrite
+      // whatever the bulk query returned.
+      const uid = sess.session.user.id;
+      const { data: own } = await sb.from('users')
+        .select('*').eq('id', uid).maybeSingle();
+      let me = own || data.users.find(u => u.id === uid) || null;
+      if (own) {
+        const i = data.users.findIndex(u => u.id === own.id);
+        if (i >= 0) data.users[i] = own; else data.users.push(own);
+        if (own.shop_id) {
+          const { data: ownShop } = await sb.from('shops')
+            .select('*').eq('id', own.shop_id).maybeSingle();
+          if (ownShop) {
+            const j = data.shops.findIndex(s => s.id === ownShop.id);
+            if (j >= 0) data.shops[j] = ownShop; else data.shops.push(ownShop);
+          }
+        }
+      }
+      // Same staleness quirk affects admin_contractors junctions after a fresh
+      // INSERT — the bulk select serves a snapshot from before the new row
+      // landed, so a freshly-linked contractor disappears from the owner's
+      // roster until the snapshot rolls. Refetch our own links by id and merge.
+      if (me) {
+        const ownLinks = [];
+        if (me.role === 'admin') {
+          const { data } = await sb.from('admin_contractors').select('*').eq('admin_id', me.id);
+          if (data) ownLinks.push(...data);
+        } else if (me.role === 'contractor') {
+          const { data } = await sb.from('admin_contractors').select('*').eq('contractor_id', me.id);
+          if (data) ownLinks.push(...data);
+        }
+        ownLinks.forEach(link => {
+          const k = data.admin_contractors.findIndex(l => l.id === link.id);
+          if (k >= 0) data.admin_contractors[k] = link; else data.admin_contractors.push(link);
+        });
+      }
+
+      // Same fix for `payments` — a contractor who just paid a worker, or the
+      // worker themselves, needs to see that fresh row immediately. Filter by
+      // payer_id / payee_id so the response bypasses the stale snapshot.
+      if (me) {
+        const filters = [];
+        if (me.role === 'contractor') {
+          filters.push(sb.from('payments').select('*').eq('payer_id', me.id));
+        }
+        if (me.role === 'worker' || me.role === 'contractor' || me.role === 'admin') {
+          filters.push(sb.from('payments').select('*').eq('payee_id', me.id));
+        }
+        const results = await Promise.all(filters);
+        const fresh = [].concat(...results.map(r => r.data || []));
+        fresh.forEach(p => {
+          const k = data.payments.findIndex(x => x.id === p.id);
+          if (k >= 0) data.payments[k] = p; else data.payments.push(p);
+        });
+      }
       if (me) {
         const shopId = me.shop_id || (data.shops[0] && data.shops[0].id) || null;
         data.shop = data.shops.find(s => s.id === shopId) || data.shops[0] || seed().shop;
@@ -254,6 +410,8 @@ const Store = {
     TABLES.forEach(t => {
       this._channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, async () => {
         try {
+          // Same staleness workaround as loadFromRemote: order by id so the
+          // realtime refresh sees the just-INSERTed/UPDATEd row.
           const { data, error } = await sb.from(t).select('*');
           if (!error && data) {
             this.data[t] = data;
@@ -312,22 +470,29 @@ const Domain = {
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   },
   pieceTypeById(id) { return Store.data.piece_types.find(p => p.id === id); },
-  addDesign({ name, sku, default_rate, piece_types }) {
+  async addDesign({ name, sku, default_rate, piece_types }) {
     const d = {
       id: uid('d'), shop_id: Store.data.shop.id,
       name: name.trim(), sku: (sku || '').trim() || null, photo: null,
       default_rate: Number(default_rate) || 0, active: true,
       created_at: new Date().toISOString()
     };
+    const pts = (piece_types || []).filter(pt => pt && pt.name && pt.name.trim()).map((pt, i) => ({
+      id: uid('pt'), shop_id: d.shop_id, design_id: d.id,
+      name: pt.name.trim(), default_rate: Number(pt.rate) || 0, sort_order: i + 1
+    }));
+    if (sb) {
+      const { data: dRow, error: e1 } = await sb.from('designs').insert(d).select().single();
+      if (e1) throw new Error('Could not save design: ' + e1.message);
+      if (!dRow) throw new Error('Design insert blocked. Re-run supabase/schema.sql.');
+      if (pts.length) {
+        const { error: e2 } = await sb.from('piece_types').insert(pts);
+        if (e2) throw new Error('Could not save piece-types: ' + e2.message);
+      }
+    }
     Store.data.designs.push(d);
-    (piece_types || []).forEach((pt, i) => {
-      if (!pt.name || !pt.name.trim()) return;
-      Store.data.piece_types.push({
-        id: uid('pt'), shop_id: d.shop_id, design_id: d.id,
-        name: pt.name.trim(), default_rate: Number(pt.rate) || 0, sort_order: i + 1
-      });
-    });
-    Store.save();
+    pts.forEach(p => Store.data.piece_types.push(p));
+    Store.saveCache();
     return d;
   },
 
@@ -339,7 +504,7 @@ const Domain = {
       .sort((a, b) => a.lot_no - b.lot_no);
   },
   lotById(id) { return Store.data.lots.find(l => l.id === id); },
-  addOrder({ design_id, total_qty, deadline, notes }) {
+  async addOrder({ design_id, total_qty, deadline, notes }) {
     const o = {
       id: uid('o'), shop_id: Store.data.shop.id,
       design_id, total_qty: Number(total_qty),
@@ -347,31 +512,53 @@ const Domain = {
       status: 'open', created_by: App.user?.id || null,
       created_at: new Date().toISOString()
     };
+    if (sb) {
+      const { data, error } = await sb.from('orders').insert(o).select().single();
+      if (error) throw new Error('Could not save order: ' + error.message);
+      if (!data) throw new Error('Order insert blocked. Re-run supabase/schema.sql.');
+    }
     Store.data.orders.push(o);
-    Store.save();
+    Store.saveCache();
     return o;
   },
-  splitOrderIntoLots(orderId, lotCount, qtyPerLot) {
+  async splitOrderIntoLots(orderId, lotCount, qtyPerLot) {
     const order = this.orderById(orderId);
     if (!order) return;
     const startNo = this.lotsForOrder(orderId).length + 1;
+    const newLots = [];
     for (let i = 0; i < lotCount; i++) {
-      Store.data.lots.push({
+      newLots.push({
         id: uid('l'), shop_id: order.shop_id, order_id: orderId,
         lot_no: startNo + i, qty: Number(qtyPerLot),
         contractor_id: null, status: 'unassigned', assigned_at: null,
         created_at: new Date().toISOString()
       });
     }
-    Store.save();
+    if (sb) {
+      const { data, error } = await sb.from('lots').insert(newLots).select();
+      if (error) throw new Error('Could not save lots: ' + error.message);
+      if (!data || data.length !== newLots.length) throw new Error('Lot insert blocked. Re-run supabase/schema.sql.');
+    }
+    newLots.forEach(l => Store.data.lots.push(l));
+    Store.saveCache();
   },
-  assignLotToContractor(lotId, contractorId) {
+  async assignLotToContractor(lotId, contractorId) {
     const l = this.lotById(lotId);
     if (!l) return;
-    l.contractor_id = contractorId;
-    l.status = 'assigned';
-    l.assigned_at = new Date().toISOString();
-    Store.save();
+    const patch = {
+      contractor_id: contractorId,
+      status: 'assigned',
+      assigned_at: new Date().toISOString()
+    };
+    if (sb) {
+      const { data, error } = await sb.from('lots').update(patch).eq('id', lotId).select();
+      if (error) throw new Error('Could not assign lot: ' + error.message);
+      if (!data || data.length === 0) {
+        throw new Error("Couldn't assign lot — RLS denied. Re-run supabase/schema.sql.");
+      }
+    }
+    Object.assign(l, patch);
+    Store.saveCache();
   },
 
   /* Worker assignments */
@@ -385,7 +572,7 @@ const Domain = {
     return Store.data.worker_assignments.filter(a => a.contractor_id === contractorId);
   },
   assignmentById(id) { return Store.data.worker_assignments.find(a => a.id === id); },
-  addAssignment({ lot_id, worker_id, contractor_id, piece_type_id, qty_assigned, rate }) {
+  async addAssignment({ lot_id, worker_id, contractor_id, piece_type_id, qty_assigned, rate }) {
     const lot = this.lotById(lot_id);
     if (!lot) return null;
     const a = {
@@ -394,8 +581,13 @@ const Domain = {
       qty_assigned: Number(qty_assigned), rate: Number(rate),
       status: 'open', assigned_at: new Date().toISOString()
     };
+    if (sb) {
+      const { data, error } = await sb.from('worker_assignments').insert(a).select().single();
+      if (error) throw new Error('Could not save assignment: ' + error.message);
+      if (!data) throw new Error('Assignment insert blocked. Re-run supabase/schema.sql.');
+    }
     Store.data.worker_assignments.push(a);
-    Store.save();
+    Store.saveCache();
     return a;
   },
 
@@ -418,7 +610,7 @@ const Domain = {
       (!toDate || e.date <= toDate)
     );
   },
-  addProductionEntry({ assignment_id, pieces_done, date, notes }) {
+  async addProductionEntry({ assignment_id, pieces_done, date, notes }) {
     const a = this.assignmentById(assignment_id);
     if (!a) throw new Error('Assignment not found');
     const e = {
@@ -428,35 +620,52 @@ const Domain = {
       notes: (notes || '').trim() || null, photo: null,
       created_at: new Date().toISOString()
     };
+    if (sb) {
+      const { data, error } = await sb.from('production_entries').insert(e).select().single();
+      if (error) throw new Error('Could not save production: ' + error.message);
+      if (!data) throw new Error('Production insert blocked. Re-run supabase/schema.sql.');
+    }
     Store.data.production_entries.push(e);
 
-    // Auto-bump statuses
+    // Auto-bump statuses (local only — UI converges; backend triggers can mirror)
     const done = this.assignmentPiecesDone(assignment_id);
-    if (done >= a.qty_assigned) a.status = 'completed';
-    else if (a.status === 'open') a.status = 'in_progress';
+    const aPatch = {};
+    if (done >= a.qty_assigned) aPatch.status = 'completed';
+    else if (a.status === 'open') aPatch.status = 'in_progress';
+    if (aPatch.status && sb) {
+      try { await sb.from('worker_assignments').update(aPatch).eq('id', a.id); } catch {}
+    }
+    Object.assign(a, aPatch);
 
     const lot = this.lotById(a.lot_id);
-    if (lot && lot.status === 'assigned') lot.status = 'in_progress';
-
-    // If all assignments for the lot are completed → mark lot completed
+    const lotPatch = {};
+    if (lot && lot.status === 'assigned') lotPatch.status = 'in_progress';
     if (lot) {
       const allAssigns = this.assignmentsForLot(lot.id);
       if (allAssigns.length > 0 && allAssigns.every(x => x.status === 'completed')) {
-        lot.status = 'completed';
+        lotPatch.status = 'completed';
       }
     }
+    if (lot && lotPatch.status && sb) {
+      try { await sb.from('lots').update(lotPatch).eq('id', lot.id); } catch {}
+    }
+    if (lot) Object.assign(lot, lotPatch);
 
-    // Order: in_progress when any production exists
     const order = this.orderById(lot.order_id);
-    if (order && order.status === 'open') order.status = 'in_progress';
+    const oPatch = {};
+    if (order && order.status === 'open') oPatch.status = 'in_progress';
     if (order) {
       const allLots = this.lotsForOrder(order.id);
       if (allLots.length > 0 && allLots.every(x => x.status === 'completed')) {
-        order.status = 'completed';
+        oPatch.status = 'completed';
       }
     }
+    if (order && oPatch.status && sb) {
+      try { await sb.from('orders').update(oPatch).eq('id', order.id); } catch {}
+    }
+    if (order) Object.assign(order, oPatch);
 
-    Store.save();
+    Store.saveCache();
     return e;
   },
   assignmentPiecesDone(assignmentId) {
@@ -711,8 +920,16 @@ const Domain = {
     };
     if (sb) {
       const { data, error } = await sb.from('users').insert(row).select().single();
-      if (error) throw new Error('Could not add ' + role + ': ' + error.message);
-      if (!data) throw new Error("Couldn't add " + role + " — your account isn't allowed to write this row.");
+      if (error) {
+        // Standard signal that the deployed Supabase schema is older than supabase/schema.sql
+        // and is missing users_admin_insert. The README troubleshooting table tells the owner
+        // to re-run the schema; surface that here so they know what to do.
+        if (/row.level security|violates row-level security|policy/i.test(error.message)) {
+          throw new Error("Couldn't add " + role + " — Supabase blocked this insert. Re-run supabase/schema.sql in the SQL editor to refresh RLS policies, then try again.");
+        }
+        throw new Error('Could not add ' + role + ': ' + error.message);
+      }
+      if (!data) throw new Error("Couldn't add " + role + " — your account isn't allowed to write this row. Re-run supabase/schema.sql to refresh RLS policies.");
       Store.data.users.push(data);
       Store.saveCache();
       return data;
@@ -757,17 +974,37 @@ const Domain = {
     return Store.data.payments.filter(p => p.payer_id === payerId)
       .sort((a, b) => b.date.localeCompare(a.date));
   },
-  addPayment({ payer_id, payee_id, amount, type, method, date, note }) {
+  async addPayment({ payer_id, payee_id, amount, type, method, date, note }) {
+    // Owners always operate inside Store.data.shop. Contractors don't have
+    // their own shop, so derive shop_id from one of the payee's assignments
+    // (the contractor is paying for work done in *that* shop). Falls back to
+    // the contractor's first lot if the payee has no assignments yet.
+    let shopId = Store.data.shop?.id || null;
+    if (!shopId) {
+      const a = (Store.data.worker_assignments || []).find(x => x.worker_id === payee_id);
+      if (a) shopId = a.shop_id;
+    }
+    if (!shopId) {
+      const l = (Store.data.lots || []).find(x => x.contractor_id === payer_id);
+      if (l) shopId = l.shop_id;
+    }
+    if (!shopId) throw new Error('Could not determine which shop this payment belongs to.');
+
     const p = {
-      id: uid('p'), shop_id: Store.data.shop.id,
+      id: uid('p'), shop_id: shopId,
       payer_id, payee_id,
       amount: Number(amount), type, method: method || 'cash',
       date: date || today(), note: (note || '').trim() || null,
       against_assignment_id: null, against_lot_id: null,
       created_at: new Date().toISOString()
     };
+    if (sb) {
+      const { data, error } = await sb.from('payments').insert(p).select().single();
+      if (error) throw new Error('Could not record payment: ' + error.message);
+      if (!data) throw new Error('Payment insert blocked. Re-run supabase/schema.sql.');
+    }
     Store.data.payments.push(p);
-    Store.save();
+    Store.saveCache();
     return p;
   },
   workerEarned(workerId) {
@@ -1085,7 +1322,7 @@ function render() {
         class: 'tab' + (App.tab === t.key && !App.detail ? ' active' : ''),
         onclick: () => goTab(t.key)
       },
-        el('div', { class: 'ico' }, t.ico),
+        icon(t.ico),
         el('div', null, t.label)
       ));
     }
@@ -1096,29 +1333,29 @@ function render() {
 
 function roleTabs(role) {
   if (role === 'software_admin') return [
-    { key: 'home',       ico: '🏠', label: 'Home' },
-    { key: 'pending',    ico: '⏳', label: 'Pending' },
-    { key: 'karkhanas',  ico: '🏭', label: 'Workshops' },
-    { key: 'reports',    ico: '📊', label: 'Reports' }
+    { key: 'home',       ico: 'home',       label: 'Home' },
+    { key: 'pending',    ico: 'hourglass',  label: 'Pending' },
+    { key: 'karkhanas',  ico: 'factory',    label: 'Workshops' },
+    { key: 'reports',    ico: 'chart',      label: 'Reports' }
   ];
   if (role === 'admin') return [
-    { key: 'home',        ico: '🏠', label: 'Home' },
-    { key: 'orders',      ico: '📋', label: 'Orders' },
-    { key: 'contractors', ico: '👥', label: 'Contractors' },
-    { key: 'designs',     ico: '🎨', label: 'Designs' },
-    { key: 'reports',     ico: '📊', label: 'Reports' }
+    { key: 'home',        ico: 'home',      label: 'Home' },
+    { key: 'orders',      ico: 'clipboard', label: 'Orders' },
+    { key: 'contractors', ico: 'users',     label: 'Contractors' },
+    { key: 'designs',     ico: 'palette',   label: 'Designs' },
+    { key: 'reports',     ico: 'chart',     label: 'Reports' }
   ];
   if (role === 'contractor') return [
-    { key: 'home',     ico: '🏠', label: 'Home' },
-    { key: 'lots',     ico: '📦', label: 'Lots' },
-    { key: 'workers',  ico: '👷', label: 'Workers' },
-    { key: 'admins',   ico: '🏢', label: 'Owners' },
-    { key: 'payments', ico: '💸', label: 'Payments' }
+    { key: 'home',     ico: 'home',     label: 'Home' },
+    { key: 'lots',     ico: 'package',  label: 'Lots' },
+    { key: 'workers',  ico: 'users',    label: 'Workers' },
+    { key: 'admins',   ico: 'store',    label: 'Owners' },
+    { key: 'payments', ico: 'wallet',   label: 'Payments' }
   ];
   if (role === 'worker') return [
-    { key: 'home',     ico: '✂️', label: 'Today' },
-    { key: 'work',     ico: '📋', label: 'My Work' },
-    { key: 'earnings', ico: '💰', label: 'Earnings' }
+    { key: 'home',     ico: 'scissors',  label: 'Today' },
+    { key: 'work',     ico: 'clipboard', label: 'My Work' },
+    { key: 'earnings', ico: 'rupee',     label: 'Earnings' }
   ];
   return [];
 }
@@ -1376,22 +1613,25 @@ function topbar(title, subtitle, opts = {}) {
   const left = opts.back
     ? el('button', {
         class: 'icon-btn', title: 'Back', 'aria-label': 'Back',
-        onclick: () => goBack()
-      }, '←')
+        onclick: () => goBack(),
+        html: ICON.back
+      })
     : null;
 
   const refreshBtn = el('button', {
     class: 'icon-btn refresh-btn', title: 'Refresh', 'aria-label': 'Refresh',
-    onclick: () => refreshApp()
-  }, '⟳');
+    onclick: () => refreshApp(),
+    html: ICON.refresh
+  });
 
   // Avatar/settings button — shows user photo if available, else gear icon.
   const settingsBtn = el('button', {
     class: 'icon-btn settings-btn' + (App.user?.photo ? ' has-photo' : ''),
     title: 'Settings', 'aria-label': 'Settings',
     style: App.user?.photo ? `background-image: url(${App.user.photo})` : '',
-    onclick: () => openModal(settingsModal())
-  }, App.user?.photo ? '' : '⚙');
+    onclick: () => openModal(settingsModal()),
+    html: App.user?.photo ? '' : ICON.settings
+  });
 
   const right = opts.action || settingsBtn;
   return el('div', { class: 'topbar' },
@@ -1876,8 +2116,102 @@ function viewAdmin() {
 
 function renderAdminDetail(wrap) {
   if (App.detail.type === 'order')      return adminOrderDetail(wrap);
+  if (App.detail.type === 'lot')        return adminLotDetail(wrap);
   if (App.detail.type === 'contractor') return adminContractorDetail(wrap);
   if (App.detail.type === 'worker')     return workerDetailView(wrap, 'admin');
+  return wrap;
+}
+
+// Owner-side lot detail: see progress, pick / change the contractor it's
+// assigned to, and drill into the worker assignments the contractor has set up.
+function adminLotDetail(wrap) {
+  const l = Domain.lotById(App.detail.id);
+  if (!l) { wrap.appendChild(emptyState('❓', 'Lot not found', 'Back', goBack)); return wrap; }
+  const order = Domain.orderById(l.order_id);
+  const design = order ? Domain.designById(order.design_id) : null;
+  const prog = Domain.lotProgress(l.id);
+  const contractor = l.contractor_id ? Domain.userById(l.contractor_id) : null;
+  const assignments = Domain.assignmentsForLot(l.id);
+
+  wrap.appendChild(topbar(
+    'Lot #' + l.lot_no + ' · ' + l.qty + ' pcs',
+    (design?.name || 'Order') + ' · ' + chipText(l.status),
+    { back: true }
+  ));
+
+  wrap.appendChild(el('div', { class: 'card' },
+    el('div', { class: 'row between' },
+      el('div', null,
+        el('div', { class: 'muted', style: 'font-size:12px' }, 'Progress'),
+        el('div', { style: 'font-size:22px;font-weight:800' }, prog.percent + '%'),
+        el('div', { class: 'muted' }, prog.done + ' / ' + l.qty + ' pieces')
+      ),
+      el('div', { style: 'text-align:right' },
+        el('div', { class: 'muted', style: 'font-size:12px' }, 'Status'),
+        el('div', null, chip(l.status.replace('_', ' '), l.status))
+      )
+    ),
+    progressBar(prog.percent)
+  ));
+
+  // Contractor picker — change anytime, even if already assigned.
+  const linked = Domain.contractorsForAdmin(App.user.id);
+  wrap.appendChild(sectionH('Contractor'));
+  const pickerCard = el('div', { class: 'card' });
+  if (linked.length === 0) {
+    pickerCard.appendChild(el('div', { class: 'muted' },
+      'No contractors linked yet — add one before you can assign this lot.'));
+    pickerCard.appendChild(el('button', {
+      class: 'btn full mt-12',
+      onclick: () => openModal(addContractorForAdminForm())
+    }, '+ Add contractor'));
+  } else {
+    pickerCard.appendChild(el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:6px' },
+      contractor ? 'Currently assigned to:' : 'Pick a contractor to assign this lot:'));
+    const sel = selectField('lot_assign_' + l.id,
+      [{ value: '', label: '— pick contractor —' }]
+        .concat(linked.map(c => ({ value: c.id, label: c.name }))));
+    sel.value = l.contractor_id || '';
+    sel.addEventListener('change', async () => {
+      if (!sel.value) return;
+      try {
+        await Domain.assignLotToContractor(l.id, sel.value);
+        toast('Lot assigned to ' + Domain.userById(sel.value)?.name, 'success');
+        await Store.loadFromRemote();
+        render();
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    pickerCard.appendChild(sel);
+    if (contractor) {
+      pickerCard.appendChild(el('div', { class: 'muted mt-12', style: 'font-size:12px' },
+        '✓ Assigned ' + (l.assigned_at ? fmtRelDate(l.assigned_at.slice(0,10)) : '')));
+    }
+  }
+  wrap.appendChild(pickerCard);
+
+  // Worker assignments under this lot — read-only for the owner.
+  wrap.appendChild(sectionH('Worker assignments (' + assignments.length + ')'));
+  if (assignments.length === 0) {
+    wrap.appendChild(emptyState('🧵',
+      contractor
+        ? 'No worker assignments yet — ' + contractor.name + ' will set these up.'
+        : 'Assign a contractor first.'));
+  } else {
+    assignments.forEach(a => {
+      const w = Domain.userById(a.worker_id);
+      const pt = Domain.pieceTypeById(a.piece_type_id);
+      const ap = Domain.assignmentEarned ? Domain.assignmentEarned(a.id) : 0;
+      wrap.appendChild(el('div', { class: 'list-item' },
+        el('div', { class: 'avatar' }, (w?.name?.[0] || '?').toUpperCase()),
+        el('div', { class: 'meta' },
+          el('div', { class: 'name' }, (w?.name || 'Worker') + ' · ' + (pt?.name || '—')),
+          el('div', { class: 'sub' }, a.qty_assigned + ' pcs @ ₹' + a.rate + ' = ' + fmtINR(a.qty_assigned * a.rate))
+        ),
+        el('div', { class: 'end' }, fmtINR(ap))
+      ));
+    });
+  }
+
   return wrap;
 }
 
@@ -1895,6 +2229,27 @@ function adminHome(wrap) {
   const totalPaid = Store.data.payments
     .filter(p => cIds.has(p.payer_id) && ['settlement','advance','bonus'].includes(p.type))
     .reduce((s, p) => s + Number(p.amount), 0);
+
+  // Free-trial banner — counts down 7 days from owner's account creation,
+  // flips to "Trial expired" after that. Tappable to surface the renewal UI.
+  const trial = trialInfo(App.user);
+  if (trial) {
+    const expired = trial.expired;
+    const daysLabel = expired
+      ? Math.abs(trial.daysLeft) + ' day' + (Math.abs(trial.daysLeft) === 1 ? '' : 's') + ' over'
+      : trial.daysLeft + ' day' + (trial.daysLeft === 1 ? '' : 's') + ' left';
+    wrap.appendChild(el('div', {
+      class: 'trial-banner' + (expired ? ' expired' : '')
+    },
+      el('div', { class: 'trial-banner-icon', html: ICON.hourglass }),
+      el('div', { class: 'trial-banner-body' },
+        el('div', { class: 'trial-banner-title' }, expired ? 'Trial expired' : 'Free trial'),
+        el('div', { class: 'trial-banner-meta' },
+          daysLabel + ' · expires ' + fmtDate(trial.expiresAt))
+      ),
+      el('div', { class: 'trial-banner-pill' }, expired ? 'Renew' : (trial.daysLeft + 'd'))
+    ));
+  }
 
   wrap.appendChild(el('div', { class: 'stats' },
     stat('Orders', orders.length, 'primary', () => goTab('orders')),
@@ -1958,7 +2313,13 @@ function adminOrderDetail(wrap) {
   const prog = Domain.orderProgress(o.id);
   const lots = Domain.lotsForOrder(o.id);
 
-  wrap.appendChild(topbar(design?.name || 'Order', '× ' + o.total_qty + ' · ' + chipText(o.status), { back: true }));
+  const printBtn = el('button', {
+    class: 'icon-btn', title: 'Print invoice', 'aria-label': 'Print invoice',
+    onclick: () => printOrderInvoice(o.id),
+    html: ICON.printer
+  });
+  wrap.appendChild(topbar(design?.name || 'Order', '× ' + o.total_qty + ' · ' + chipText(o.status),
+    { back: true, action: printBtn }));
 
   wrap.appendChild(el('div', { class: 'card' },
     el('div', { class: 'row between' },
@@ -2389,10 +2750,19 @@ function workerDetailView(wrap, viewerRole) {
   const assigns = Domain.assignmentsForWorker(w.id);
   const recent = Domain.entriesForWorker(w.id, daysAgo(30)).slice(0, 20);
 
-  const action = viewerRole === 'contractor'
-    ? el('button', { class: 'icon-btn', title: 'Pay',
-        onclick: () => openModal(paymentForm({ payer_id: App.user.id, payee_id: w.id })) }, '💸')
+  const printBtn = el('button', {
+    class: 'icon-btn', title: 'Print payslip', 'aria-label': 'Print payslip',
+    onclick: () => printWorkerPayslip(w.id),
+    html: ICON.printer
+  });
+  const payBtn = viewerRole === 'contractor'
+    ? el('button', { class: 'icon-btn', title: 'Pay', 'aria-label': 'Pay worker',
+        onclick: () => openModal(paymentForm({ payer_id: App.user.id, payee_id: w.id })),
+        html: ICON.rupee })
     : null;
+  // Topbar accepts a single right-side action — wrap multiple icons in a row.
+  const action = el('div', { class: 'row gap-sm', style: 'gap:6px' },
+    printBtn, payBtn);
 
   wrap.appendChild(topbar(w.name, w.mobile, { back: true, action }));
 
@@ -2560,7 +2930,9 @@ function selectField(name, options, opts = {}) {
 }
 
 function submitButtons(submitLabel = 'Save') {
-  return el('div', { class: 'row gap-12 mt-12' },
+  // .form-actions makes this row stick to the bottom of the modal sheet so
+  // long forms scroll while Cancel + Save stay one tap away.
+  return el('div', { class: 'form-actions' },
     el('button', { type: 'button', class: 'btn secondary', 'data-close': true, style: 'flex:1' }, 'Cancel'),
     el('button', { type: 'submit', class: 'btn', style: 'flex:2' }, submitLabel)
   );
@@ -2568,18 +2940,109 @@ function submitButtons(submitLabel = 'Save') {
 
 /* — Add design — */
 function addDesignForm() {
-  const form = el('form', {
-    onsubmit: (e) => {
-      e.preventDefault();
-      const fd = new FormData(form);
-      const piece_types = [];
-      for (let i = 0; i < 5; i++) {
-        const n = fd.get('pt_name_' + i);
-        const r = fd.get('pt_rate_' + i);
-        if (n) piece_types.push({ name: n, rate: r });
+  // Stage piece-type rows in a list — start with 3 blank rows by default,
+  // user can add/remove freely, quick-add chips populate common operations.
+  const COMMON = ['Cutting', 'Stitching', 'Finishing', 'Embroidery', 'Buttoning', 'Pressing'];
+  let rows = [
+    { name: '', rate: '' },
+    { name: '', rate: '' },
+    { name: '', rate: '' }
+  ];
+
+  const ptHost = el('div', { class: 'pt-list' });
+  const ptTotal = el('div', { class: 'pt-total' });
+
+  function snapshot() {
+    [...ptHost.querySelectorAll('.pt-row')].forEach((rowEl, i) => {
+      const n = rowEl.querySelector('input[data-k=name]');
+      const r = rowEl.querySelector('input[data-k=rate]');
+      if (rows[i]) {
+        rows[i].name = n ? n.value : '';
+        rows[i].rate = r ? r.value : '';
       }
+    });
+  }
+
+  function paint() {
+    ptHost.innerHTML = '';
+    rows.forEach((row, idx) => {
+      const card = el('div', { class: 'pt-row' });
+      const nameInput = el('input', {
+        class: 'input', type: 'text', 'data-k': 'name',
+        placeholder: idx === 0 ? 'e.g. Cutting' : 'Piece type name',
+        value: row.name
+      });
+      const rateInput = el('input', {
+        class: 'input', type: 'number', 'data-k': 'rate',
+        step: '0.5', min: '0', placeholder: '0',
+        value: row.rate
+      });
+      const removeBtn = el('button', {
+        type: 'button', class: 'pt-remove',
+        'aria-label': 'Remove this piece type',
+        title: 'Remove',
+        onclick: () => {
+          snapshot();
+          rows.splice(idx, 1);
+          if (rows.length === 0) rows.push({ name: '', rate: '' });
+          paint();
+        },
+        html: ICON.x
+      });
+      card.appendChild(el('div', { class: 'pt-row-name' }, nameInput));
+      card.appendChild(el('div', { class: 'pt-row-rate' },
+        el('span', { class: 'pt-currency' }, '₹'),
+        rateInput
+      ));
+      card.appendChild(removeBtn);
+      // Live-recalc total as user types
+      [nameInput, rateInput].forEach(inp => inp.addEventListener('input', updateTotal));
+      ptHost.appendChild(card);
+    });
+    updateTotal();
+  }
+
+  function updateTotal() {
+    const sum = [...ptHost.querySelectorAll('input[data-k=rate]')]
+      .reduce((s, i) => s + (Number(i.value) || 0), 0);
+    ptTotal.innerHTML = '';
+    ptTotal.appendChild(el('span', { class: 'pt-total-label' }, 'Total per piece'));
+    ptTotal.appendChild(el('span', { class: 'pt-total-value' }, fmtINR(sum)));
+  }
+
+  const addRowBtn = el('button', {
+    type: 'button', class: 'pt-add',
+    onclick: () => { snapshot(); rows.push({ name: '', rate: '' }); paint(); }
+  }, icon('plus'), el('span', null, 'Add row'));
+
+  // Quick-add chips for common operations
+  const chipRow = el('div', { class: 'pt-chips' });
+  COMMON.forEach(name => {
+    chipRow.appendChild(el('button', {
+      type: 'button', class: 'pt-chip',
+      onclick: () => {
+        snapshot();
+        // Find first empty row, else append
+        const blank = rows.findIndex(r => !r.name?.trim());
+        if (blank >= 0) rows[blank] = { name, rate: rows[blank].rate || '' };
+        else rows.push({ name, rate: '' });
+        paint();
+      }
+    }, '+ ' + name));
+  });
+
+  paint();
+
+  const form = el('form', {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      snapshot();
+      const fd = new FormData(form);
+      const piece_types = rows
+        .filter(r => r.name && String(r.name).trim())
+        .map(r => ({ name: r.name, rate: r.rate }));
       try {
-        Domain.addDesign({
+        await Domain.addDesign({
           name: fd.get('name'), sku: fd.get('sku'),
           default_rate: fd.get('default_rate'), piece_types
         });
@@ -2588,19 +3051,20 @@ function addDesignForm() {
       } catch (err) { toast(err.message, 'error'); }
     }
   });
-  const ptRows = [];
-  for (let i = 0; i < 5; i++) {
-    ptRows.push(el('div', { class: 'row gap-12' },
-      input('pt_name_' + i, { placeholder: i === 0 ? 'e.g. Cutting' : 'Piece type', style: 'flex:2' }),
-      input('pt_rate_' + i, { type: 'number', placeholder: 'Rate ₹', step: '0.5', min: '0', style: 'flex:1' })
-    ));
-  }
+
   form.appendChild(modalShell('Add design', [
     field('Design name', input('name', { required: true, placeholder: 'e.g. Formal Shirt' })),
     field('SKU (optional)', input('sku', { placeholder: 'e.g. SH-001' })),
-    field('All-in rate (optional)', input('default_rate', { type: 'number', placeholder: 'auto from piece-types', step: '0.5', min: '0' })),
-    el('div', { style: 'font-weight:600;margin:8px 0 4px' }, 'Piece-type rates (per piece)'),
-    ...ptRows,
+    field('All-in rate (optional)', input('default_rate', { type: 'number', placeholder: 'auto from piece-types', step: '0.5', min: '0' }),
+      'Leave blank to auto-sum from piece-type rates below.'),
+    el('div', { class: 'pt-section-head' },
+      el('label', null, 'Piece-type rates (per piece)'),
+      addRowBtn
+    ),
+    ptHost,
+    ptTotal,
+    el('div', { class: 'pt-quick-label' }, 'Quick add'),
+    chipRow,
     submitButtons('Save design')
   ]));
   return form;
@@ -2736,24 +3200,60 @@ function addOrderForm() {
     ]);
   }
   const form = el('form', {
-    onsubmit: (e) => {
+    onsubmit: async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
-      const order = Domain.addOrder({
-        design_id: fd.get('design_id'),
-        total_qty: fd.get('total_qty'),
-        deadline: fd.get('deadline') || null,
-        notes: fd.get('notes')
-      });
-      toast('Order created — split into lots next', 'success');
-      closeModal();
-      goDetail('order', order.id);
+      try {
+        const order = await Domain.addOrder({
+          design_id: fd.get('design_id'),
+          total_qty: fd.get('total_qty'),
+          deadline: fd.get('deadline') || null,
+          notes: fd.get('notes')
+        });
+        toast('Order created — split into lots next', 'success');
+        closeModal();
+        goDetail('order', order.id);
+      } catch (err) { toast(err.message, 'error'); }
     }
   });
+
+  // Deadline field + quick-add chips (+1 week / +2 weeks / +1 month / +2 months)
+  const deadlineInput = input('deadline', { type: 'date' });
+  const deadlineChips = el('div', { class: 'pt-chips', style: 'margin-top:6px' });
+  [
+    { label: '+1 week',   days: 7  },
+    { label: '+2 weeks',  days: 14 },
+    { label: '+1 month',  days: 30 },
+    { label: '+2 months', days: 60 }
+  ].forEach(opt => {
+    deadlineChips.appendChild(el('button', {
+      type: 'button', class: 'pt-chip',
+      onclick: () => {
+        const d = new Date();
+        d.setDate(d.getDate() + opt.days);
+        deadlineInput.value = d.toISOString().slice(0, 10);
+        // Highlight the chosen chip
+        deadlineChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+        deadlineChips.querySelectorAll('.pt-chip').forEach(c => {
+          if (c.textContent.trim() === opt.label) c.classList.add('selected');
+        });
+      }
+    }, opt.label));
+  });
+  // Clear chip-selection when the user picks a date by hand
+  deadlineInput.addEventListener('input', () => {
+    deadlineChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+  });
+  const deadlineField = el('div', { class: 'field' },
+    el('label', null, 'Deadline'),
+    deadlineInput,
+    deadlineChips
+  );
+
   form.appendChild(modalShell('New bulk order', [
     field('Design', selectField('design_id', designs.map(d => ({ value: d.id, label: d.name })), { required: true })),
     field('Total quantity', input('total_qty', { type: 'number', required: true, min: 1, placeholder: 'e.g. 1000' })),
-    field('Deadline', input('deadline', { type: 'date' })),
+    deadlineField,
     field('Notes', el('textarea', { name: 'notes', rows: 2, placeholder: 'Wholesale customer, fabric ready, etc.' })),
     submitButtons('Create order')
   ]));
@@ -2767,23 +3267,76 @@ function splitOrderForm(orderId) {
   const used = existing.reduce((s, l) => s + l.qty, 0);
   const remaining = order.total_qty - used;
 
+  const countInput = input('count', { type: 'number', required: true, min: 1, value: 1 });
+  const qtyInput   = input('qty',   { type: 'number', required: true, min: 1, value: Math.min(100, remaining) });
+  const previewBar = el('div', { class: 'pt-total' });
+
+  function refreshPreview() {
+    const c = Number(countInput.value) || 0;
+    const q = Number(qtyInput.value) || 0;
+    const total = c * q;
+    previewBar.innerHTML = '';
+    previewBar.appendChild(el('span', { class: 'pt-total-label' },
+      c + ' lot' + (c === 1 ? '' : 's') + ' × ' + q + ' = ' + total + ' pcs'));
+    previewBar.appendChild(el('span', {
+      class: 'pt-total-value',
+      style: total > remaining ? 'color:var(--c-danger)' : ''
+    }, total > remaining ? 'over by ' + (total - remaining) : (remaining - total) + ' left'));
+  }
+  refreshPreview();
+  [countInput, qtyInput].forEach(i => i.addEventListener('input', refreshPreview));
+
+  // Quick presets — populate (count, qty) so the user can split common ways in one tap
+  const presets = el('div', { class: 'pt-chips', style: 'margin-top:6px' });
+  function applyPreset(c, q) {
+    countInput.value = c; qtyInput.value = q;
+    refreshPreview();
+    presets.querySelectorAll('.pt-chip').forEach(ch => ch.classList.remove('selected'));
+    presets.querySelectorAll('.pt-chip').forEach(ch => {
+      if (Number(ch.dataset.c) === c && Number(ch.dataset.q) === q) ch.classList.add('selected');
+    });
+  }
+  function pushPreset(label, c, q) {
+    if (c < 1 || q < 1 || c * q > remaining) return;
+    presets.appendChild(el('button', {
+      type: 'button', class: 'pt-chip',
+      'data-c': c, 'data-q': q,
+      onclick: () => applyPreset(c, q)
+    },
+      el('span', null, label),
+      el('span', { class: 'pt-chip-meta' }, c + '×' + q)
+    ));
+  }
+  pushPreset('All',           1,                                    remaining);
+  pushPreset('5 × 100',       5,                                    Math.min(100, Math.floor(remaining / 5)));
+  pushPreset('10 × 50',       10,                                   Math.min(50,  Math.floor(remaining / 10)));
+  pushPreset('Even 100',      Math.max(1, Math.ceil(remaining / 100)), Math.min(100, remaining));
+  [countInput, qtyInput].forEach(i => i.addEventListener('input', () => {
+    presets.querySelectorAll('.pt-chip').forEach(ch => ch.classList.remove('selected'));
+  }));
+
   const form = el('form', {
-    onsubmit: (e) => {
+    onsubmit: async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
       const count = Number(fd.get('count'));
       const qty = Number(fd.get('qty'));
       if (count * qty > remaining) { toast('Exceeds remaining quantity', 'error'); return; }
-      Domain.splitOrderIntoLots(orderId, count, qty);
-      toast(count + ' lots created', 'success');
-      closeModal(); render();
+      try {
+        await Domain.splitOrderIntoLots(orderId, count, qty);
+        toast(count + ' lots created', 'success');
+        closeModal(); render();
+      } catch (err) { toast(err.message, 'error'); }
     }
   });
   form.appendChild(modalShell('Split into lots', [
     el('div', { class: 'muted', style: 'margin-bottom:8px' },
       'Total ' + order.total_qty + ' · already in lots: ' + used + ' · remaining: ' + remaining),
-    field('Number of lots', input('count', { type: 'number', required: true, min: 1, value: 1 })),
-    field('Pieces per lot', input('qty', { type: 'number', required: true, min: 1, value: Math.min(100, remaining) })),
+    el('div', { class: 'pt-quick-label' }, 'Quick presets'),
+    presets,
+    field('Number of lots', countInput),
+    field('Pieces per lot', qtyInput),
+    previewBar,
     submitButtons('Create lots')
   ]));
 
@@ -2802,11 +3355,13 @@ function assignLotInline(lot) {
   const contractors = Domain.contractorsForAdmin(App.user.id);
   const sel = selectField('lot_' + lot.id, [{ value: '', label: '— pick contractor —' }]
     .concat(contractors.map(c => ({ value: c.id, label: c.name }))));
-  sel.addEventListener('change', () => {
+  sel.addEventListener('change', async () => {
     if (sel.value) {
-      Domain.assignLotToContractor(lot.id, sel.value);
-      toast('Lot ' + lot.lot_no + ' assigned', 'success');
-      closeModal(); render();
+      try {
+        await Domain.assignLotToContractor(lot.id, sel.value);
+        toast('Lot ' + lot.lot_no + ' assigned', 'success');
+        closeModal(); render();
+      } catch (e) { toast(e.message, 'error'); }
     }
   });
   return el('div', { class: 'row gap-12 mb-12' },
@@ -2843,41 +3398,97 @@ function assignWorkerForm(lotId) {
     ]);
   }
 
+  let selectedPtId = pieceTypes[0].id;
+  const rateInput = input('rate', { type: 'number', step: '0.5', min: '0', value: pieceTypes[0].default_rate });
+  const qtyInput  = input('qty_assigned', { type: 'number', required: true, min: 1, value: lot.qty });
+  const ptHidden  = el('input', { type: 'hidden', name: 'piece_type_id', value: selectedPtId });
+
+  // Piece-type chip selector (replaces a small dropdown that hid the rates)
+  const ptChips = el('div', { class: 'pt-chips' });
+  function paintPtChips() {
+    ptChips.innerHTML = '';
+    pieceTypes.forEach(p => {
+      const isSel = p.id === selectedPtId;
+      ptChips.appendChild(el('button', {
+        type: 'button',
+        class: 'pt-chip' + (isSel ? ' selected' : ''),
+        onclick: () => {
+          selectedPtId = p.id;
+          ptHidden.value = p.id;
+          rateInput.value = p.default_rate;
+          paintPtChips();
+        }
+      },
+        el('span', null, p.name),
+        el('span', { class: 'pt-chip-meta' }, '₹' + p.default_rate)
+      ));
+    });
+  }
+  paintPtChips();
+
+  // Quantity quick-fills
+  const qtyChips = el('div', { class: 'pt-chips', style: 'margin-top:6px' });
+  function setQty(n) {
+    qtyInput.value = n;
+    qtyChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+    qtyChips.querySelectorAll('.pt-chip').forEach(c => {
+      if (Number(c.dataset.qty) === n) c.classList.add('selected');
+    });
+  }
+  const qtyOptions = [
+    { label: 'All ' + lot.qty,  qty: lot.qty,  meta: 'pcs' },
+    { label: 'Half',            qty: Math.max(1, Math.floor(lot.qty / 2)), meta: Math.max(1, Math.floor(lot.qty / 2)) + ' pcs' },
+    { label: '25 pcs',          qty: Math.min(25, lot.qty), meta: null },
+    { label: '50 pcs',          qty: Math.min(50, lot.qty), meta: null }
+  ];
+  qtyOptions.forEach(o => {
+    qtyChips.appendChild(el('button', {
+      type: 'button', class: 'pt-chip', 'data-qty': o.qty,
+      onclick: () => setQty(o.qty)
+    },
+      el('span', null, o.label),
+      o.meta ? el('span', { class: 'pt-chip-meta' }, o.meta) : null
+    ));
+  });
+  qtyInput.addEventListener('input', () => {
+    qtyChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+  });
+
   const form = el('form', {
-    onsubmit: (e) => {
+    onsubmit: async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
       const pt = Domain.pieceTypeById(fd.get('piece_type_id'));
-      Domain.addAssignment({
-        lot_id: lotId,
-        worker_id: fd.get('worker_id'),
-        contractor_id: lot.contractor_id || App.user.id,
-        piece_type_id: fd.get('piece_type_id'),
-        qty_assigned: fd.get('qty_assigned'),
-        rate: fd.get('rate') || pt.default_rate
-      });
-      toast('Work assigned', 'success');
-      closeModal(); render();
+      try {
+        await Domain.addAssignment({
+          lot_id: lotId,
+          worker_id: fd.get('worker_id'),
+          contractor_id: lot.contractor_id || App.user.id,
+          piece_type_id: fd.get('piece_type_id'),
+          qty_assigned: fd.get('qty_assigned'),
+          rate: fd.get('rate') || pt.default_rate
+        });
+        toast('Work assigned', 'success');
+        closeModal(); render();
+      } catch (err) { toast(err.message, 'error'); }
     }
-  });
-
-  // Update rate when piece type changes
-  const ptSelect = selectField('piece_type_id',
-    pieceTypes.map(p => ({ value: p.id, label: p.name + ' (₹' + p.default_rate + ')' })),
-    { required: true });
-
-  const rateInput = input('rate', { type: 'number', step: '0.5', min: '0', value: pieceTypes[0].default_rate });
-  ptSelect.addEventListener('change', () => {
-    const pt = Domain.pieceTypeById(ptSelect.value);
-    if (pt) rateInput.value = pt.default_rate;
   });
 
   form.appendChild(modalShell('Assign work · Lot #' + lot.lot_no, [
     el('div', { class: 'muted', style: 'margin-bottom:8px' }, design.name + ' · ' + lot.qty + ' pcs in this lot'),
     field('Worker', selectField('worker_id', workers.map(w => ({ value: w.id, label: w.name })), { required: true })),
-    field('Piece type', ptSelect),
-    field('Quantity', input('qty_assigned', { type: 'number', required: true, min: 1, value: lot.qty })),
-    field('Rate per piece (₹)', rateInput),
+    el('div', { class: 'field' },
+      el('label', null, 'Piece type'),
+      ptHidden,
+      ptChips
+    ),
+    el('div', { class: 'field' },
+      el('label', null, 'Quantity'),
+      qtyInput,
+      qtyChips
+    ),
+    field('Rate per piece (₹)', rateInput,
+      'Auto-fills from the selected piece type — override if this assignment has a special rate.'),
     submitButtons('Assign')
   ]));
   return form;
@@ -2890,11 +3501,11 @@ function logProductionForm(assignmentId, opts = {}) {
     : null;
 
   const form = el('form', {
-    onsubmit: (e) => {
+    onsubmit: async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
       try {
-        Domain.addProductionEntry({
+        await Domain.addProductionEntry({
           assignment_id: assignmentId || fd.get('assignment_id'),
           pieces_done: fd.get('pieces_done'),
           date: fd.get('date'),
@@ -2930,11 +3541,70 @@ function logProductionForm(assignmentId, opts = {}) {
       done + ' / ' + a.qty_assigned + ' done · ₹' + a.rate + '/pc');
   }
 
+  // Pieces input + quick increment chips (+1, +5, +10, +25, +50)
+  const piecesInput = input('pieces_done', { type: 'number', required: true, min: 1, placeholder: 'How many today' });
+  const piecesChips = el('div', { class: 'pt-chips', style: 'margin-top:6px' });
+  function addPieces(n) {
+    const cur = Number(piecesInput.value) || 0;
+    piecesInput.value = cur + n;
+    piecesChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+  }
+  [1, 5, 10, 25, 50].forEach(n => {
+    piecesChips.appendChild(el('button', {
+      type: 'button', class: 'pt-chip',
+      onclick: () => addPieces(n)
+    }, '+' + n));
+  });
+  // "Mark all" — fills remaining quantity for the selected assignment
+  function markAllRemaining() {
+    const id = assignmentId || form.querySelector('select[name=assignment_id]')?.value;
+    if (!id) return;
+    const a = Domain.assignmentById(id);
+    if (!a) return;
+    const remaining = Math.max(0, a.qty_assigned - Domain.assignmentPiecesDone(id));
+    if (remaining > 0) piecesInput.value = remaining;
+  }
+  piecesChips.appendChild(el('button', {
+    type: 'button', class: 'pt-chip',
+    onclick: markAllRemaining
+  }, el('span', null, 'All remaining')));
+
+  // Date input + Today / Yesterday chips
+  const dateInput = input('date', { type: 'date', value: today() });
+  const dateChips = el('div', { class: 'pt-chips', style: 'margin-top:6px' });
+  function setDateOffset(daysBack, label) {
+    const d = new Date();
+    d.setDate(d.getDate() - daysBack);
+    dateInput.value = d.toISOString().slice(0, 10);
+    dateChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+    dateChips.querySelectorAll('.pt-chip').forEach(c => {
+      if (c.textContent.trim() === label) c.classList.add('selected');
+    });
+  }
+  ['Today', 'Yesterday'].forEach((label, i) => {
+    const chip = el('button', {
+      type: 'button', class: 'pt-chip' + (label === 'Today' ? ' selected' : ''),
+      onclick: () => setDateOffset(i, label)
+    }, label);
+    dateChips.appendChild(chip);
+  });
+  dateInput.addEventListener('input', () => {
+    dateChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+  });
+
   form.appendChild(modalShell('Log production', [
     context,
     assignmentField,
-    field('Pieces done', input('pieces_done', { type: 'number', required: true, min: 1, placeholder: 'How many today' })),
-    field('Date', input('date', { type: 'date', value: today() })),
+    el('div', { class: 'field' },
+      el('label', null, 'Pieces done'),
+      piecesInput,
+      piecesChips
+    ),
+    el('div', { class: 'field' },
+      el('label', null, 'Date'),
+      dateInput,
+      dateChips
+    ),
     field('Notes (optional)', el('textarea', { name: 'notes', rows: 2 })),
     submitButtons('Log pieces')
   ]));
@@ -2946,26 +3616,60 @@ function paymentForm({ payer_id, payee_id }) {
   const payee = Domain.userById(payee_id);
   const balance = Domain.workerBalance(payee_id);
 
+  // Quick-amount chips: full balance, half, ₹100, ₹500
+  const amountInput = input('amount', { type: 'number', required: true, min: 1, step: '1',
+    value: Math.max(0, Math.round(balance)) });
+  const amtChips = el('div', { class: 'pt-chips', style: 'margin-top:6px' });
+  function setAmt(n) {
+    amountInput.value = n;
+    amtChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+    amtChips.querySelectorAll('.pt-chip').forEach(c => {
+      if (Number(c.dataset.amt) === n) c.classList.add('selected');
+    });
+  }
+  [
+    { label: 'Full',   amt: Math.max(1, Math.round(balance)),       meta: fmtINR(Math.max(0, Math.round(balance))) },
+    { label: 'Half',   amt: Math.max(1, Math.round(balance / 2)),   meta: fmtINR(Math.max(0, Math.round(balance / 2))) },
+    { label: '₹100',   amt: 100, meta: null },
+    { label: '₹500',   amt: 500, meta: null }
+  ].forEach(o => {
+    amtChips.appendChild(el('button', {
+      type: 'button', class: 'pt-chip', 'data-amt': o.amt,
+      onclick: () => setAmt(o.amt)
+    },
+      el('span', null, o.label),
+      o.meta ? el('span', { class: 'pt-chip-meta' }, o.meta) : null
+    ));
+  });
+  amountInput.addEventListener('input', () => {
+    amtChips.querySelectorAll('.pt-chip').forEach(c => c.classList.remove('selected'));
+  });
+
   const form = el('form', {
-    onsubmit: (e) => {
+    onsubmit: async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
-      Domain.addPayment({
-        payer_id, payee_id,
-        amount: fd.get('amount'),
-        type: fd.get('type'),
-        method: fd.get('method'),
-        date: fd.get('date'),
-        note: fd.get('note')
-      });
-      toast('Payment recorded', 'success');
-      closeModal(); render();
+      try {
+        await Domain.addPayment({
+          payer_id, payee_id,
+          amount: fd.get('amount'),
+          type: fd.get('type'),
+          method: fd.get('method'),
+          date: fd.get('date'),
+          note: fd.get('note')
+        });
+        toast('Payment recorded', 'success');
+        closeModal(); render();
+      } catch (err) { toast(err.message, 'error'); }
     }
   });
   form.appendChild(modalShell('Pay ' + (payee?.name || 'worker'), [
     el('div', { class: 'muted', style: 'margin-bottom:8px' }, 'Pending balance: ' + fmtINR(balance)),
-    field('Amount (₹)', input('amount', { type: 'number', required: true, min: 1, step: '1',
-      value: Math.max(0, Math.round(balance)) })),
+    el('div', { class: 'field' },
+      el('label', null, 'Amount (₹)'),
+      amountInput,
+      amtChips
+    ),
     field('Type', selectField('type', [
       { value: 'settlement', label: 'Settlement (against work done)' },
       { value: 'advance', label: 'Advance' },
@@ -2988,109 +3692,793 @@ function paymentForm({ payer_id, payee_id }) {
 /* helpers */
 function chipText(s) { return (s || '').replace('_', ' '); }
 
+/* ─── Printable invoices ──────────────────────────────────── */
+// Default GST rate used in invoice totals — owners can adjust later from settings.
+const INVOICE_TAX_PERCENT = 5;
+
+// INR amount → words (handles up to 99,99,999 — enough for tailoring invoices).
+function numberToINRWords(n) {
+  n = Math.round(Number(n) || 0);
+  if (n === 0) return 'Zero rupees only';
+  const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine',
+                'Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  function under1000(x) {
+    let s = '';
+    if (x >= 100) { s += ones[Math.floor(x / 100)] + ' Hundred '; x %= 100; }
+    if (x >= 20)  { s += tens[Math.floor(x / 10)] + (x % 10 ? ' ' + ones[x % 10] : ''); }
+    else if (x > 0) s += ones[x];
+    return s.trim();
+  }
+  let s = '';
+  const cr = Math.floor(n / 10000000);
+  if (cr) { s += under1000(cr) + ' Crore '; n %= 10000000; }
+  const lk = Math.floor(n / 100000);
+  if (lk) { s += under1000(lk) + ' Lakh '; n %= 100000; }
+  const th = Math.floor(n / 1000);
+  if (th) { s += under1000(th) + ' Thousand '; n %= 1000; }
+  if (n) s += under1000(n);
+  return s.trim() + ' rupees only';
+}
+
+// Open the invoice in a full-screen preview modal so the owner can review
+// before printing. The print button calls window.print() which uses
+// @media print rules to strip everything except the invoice content.
+function openInvoicePreview(buildContent) {
+  const wrap = el('div', { class: 'invoice-preview' });
+  const toolbar = el('div', { class: 'invoice-toolbar no-print' },
+    el('button', {
+      class: 'icon-btn invoice-toolbar-btn',
+      onclick: () => closeModal(),
+      'aria-label': 'Close',
+      html: ICON.x
+    }),
+    el('div', { class: 'invoice-toolbar-title' }, 'Invoice preview'),
+    el('button', {
+      class: 'btn invoice-toolbar-print',
+      onclick: () => window.print()
+    }, icon('printer'), el('span', null, 'Print'))
+  );
+  wrap.appendChild(toolbar);
+  const sheet = el('div', { class: 'invoice-block invoice-on-screen', id: 'printBlock' });
+  buildContent(sheet);
+  wrap.appendChild(sheet);
+  openModal(wrap);
+}
+
+function invoiceMeta(label, value) {
+  return el('div', { class: 'inv-meta-row' },
+    el('span', { class: 'inv-meta-label' }, label),
+    el('span', { class: 'inv-meta-value' }, value)
+  );
+}
+
+function printOrderInvoice(orderId) {
+  const o = Domain.orderById(orderId);
+  if (!o) return toast('Order not found', 'error');
+  const design = Domain.designById(o.design_id);
+  const lots = Domain.lotsForOrder(orderId);
+  const pieceTypes = design ? Domain.pieceTypesForDesign(design.id) : [];
+  const shop = Store.data.shop || {};
+  const prefs = (typeof getPrefs === 'function') ? getPrefs() : {};
+  const adminUpi = prefs.adminUpi || {};
+
+  // Build the line-items: for each lot, one row per piece-type with done qty
+  // (so the customer sees Cutting / Stitching / Finishing breakdown clearly).
+  const lineItems = [];
+  let lineNo = 0;
+  let subtotal = 0;
+  lots.forEach(l => {
+    const contractor = l.contractor_id ? Domain.userById(l.contractor_id) : null;
+    const lotAssignments = Domain.assignmentsForLot(l.id);
+    if (lotAssignments.length === 0) {
+      lineNo++;
+      lineItems.push({
+        no: lineNo,
+        title: 'Lot #' + l.lot_no + (contractor ? ' · ' + contractor.name : ' · unassigned'),
+        sub: l.qty + ' pcs · 0 done',
+        qty: 0, rate: 0, amount: 0
+      });
+      return;
+    }
+    lotAssignments.forEach(a => {
+      const pt = Domain.pieceTypeById(a.piece_type_id);
+      const done = Domain.assignmentPiecesDone(a.id);
+      const amount = done * Number(a.rate);
+      subtotal += amount;
+      lineNo++;
+      lineItems.push({
+        no: lineNo,
+        title: (pt?.name || 'Piece') + ' · Lot #' + l.lot_no,
+        sub: contractor ? 'by ' + contractor.name : '',
+        qty: done, rate: a.rate, amount
+      });
+    });
+  });
+
+  const tax = Math.round(subtotal * INVOICE_TAX_PERCENT) / 100;
+  const grandTotal = Math.round(subtotal + tax);
+  const roundOff = grandTotal - (subtotal + tax);
+  const invoiceNo = 'INV-' + new Date().getFullYear() + '-' + orderId.slice(-6).toUpperCase();
+  const totalDone = lots.reduce((s, l) => s + Domain.lotProgress(l.id).done, 0);
+
+  openInvoicePreview((sheet) => {
+    sheet.appendChild(el('div', { class: 'inv-header' },
+      el('div', { class: 'inv-from' },
+        el('div', { class: 'inv-from-label' }, 'FROM'),
+        el('div', { class: 'inv-from-name' }, shop.name || 'Workshop'),
+        shop.address ? el('div', { class: 'inv-line' }, shop.address) : null,
+        shop.phone ? el('div', { class: 'inv-line' }, '☎ ' + shop.phone) : null,
+        adminUpi.upiId ? el('div', { class: 'inv-line' }, 'UPI: ' + adminUpi.upiId) : null
+      ),
+      el('div', { class: 'inv-doc' },
+        el('div', { class: 'inv-doc-title' }, 'TAX INVOICE'),
+        invoiceMeta('Invoice #', invoiceNo),
+        invoiceMeta('Date', fmtDate(today())),
+        invoiceMeta('Order #', orderId.slice(-6).toUpperCase()),
+        invoiceMeta('Status', (o.status || '').replace('_', ' '))
+      )
+    ));
+
+    sheet.appendChild(el('div', { class: 'inv-billto' },
+      el('div', { class: 'inv-billto-label' }, 'BILL TO'),
+      el('div', { class: 'inv-billto-name' }, o.notes || '— Customer details —'),
+      el('div', { class: 'inv-line' }, design ? design.name + (design.sku ? ' · ' + design.sku : '') : 'Custom production'),
+      el('div', { class: 'inv-line' }, 'Total ordered: ' + o.total_qty + ' pcs · Deadline ' + (o.deadline ? fmtDate(o.deadline) : '—'))
+    ));
+
+    // Line items table
+    const table = el('table', { class: 'inv-items' });
+    table.appendChild(el('thead', null,
+      el('tr', null,
+        el('th', { class: 'col-no' }, '#'),
+        el('th', { class: 'col-desc' }, 'Description'),
+        el('th', { class: 'col-num' }, 'Qty'),
+        el('th', { class: 'col-num' }, 'Rate'),
+        el('th', { class: 'col-num' }, 'Amount')
+      )
+    ));
+    const tbody = el('tbody');
+    lineItems.forEach(li => {
+      tbody.appendChild(el('tr', null,
+        el('td', { class: 'col-no' }, String(li.no)),
+        el('td', { class: 'col-desc' },
+          el('div', { class: 'inv-item-title' }, li.title),
+          li.sub ? el('div', { class: 'inv-item-sub' }, li.sub) : null
+        ),
+        el('td', { class: 'col-num' }, String(li.qty)),
+        el('td', { class: 'col-num' }, fmtINR(li.rate)),
+        el('td', { class: 'col-num' }, fmtINR(li.amount))
+      ));
+    });
+    table.appendChild(tbody);
+    sheet.appendChild(table);
+
+    // Totals
+    sheet.appendChild(el('div', { class: 'inv-totals' },
+      invoiceMeta('Pieces produced', totalDone + ' / ' + o.total_qty),
+      invoiceMeta('Subtotal',   fmtINR(subtotal)),
+      invoiceMeta('GST ' + INVOICE_TAX_PERCENT + '%', fmtINR(tax)),
+      Math.abs(roundOff) >= 0.01 ? invoiceMeta('Round off', fmtINR(roundOff)) : null,
+      el('div', { class: 'inv-grand' },
+        el('span', null, 'GRAND TOTAL'),
+        el('span', null, fmtINR(grandTotal))
+      ),
+      el('div', { class: 'inv-words' }, numberToINRWords(grandTotal))
+    ));
+
+    // Payment block
+    if (adminUpi.upiId) {
+      sheet.appendChild(el('div', { class: 'inv-pay' },
+        el('div', { class: 'inv-pay-label' }, 'PAYMENT'),
+        el('div', { class: 'inv-line' }, 'Pay via UPI: ' + adminUpi.upiId + (adminUpi.upiName ? ' (' + adminUpi.upiName + ')' : ''))
+      ));
+    }
+
+    sheet.appendChild(el('div', { class: 'inv-terms' },
+      el('div', { class: 'inv-terms-label' }, 'TERMS'),
+      el('div', { class: 'inv-line' }, '1. Payment due within 7 days of invoice date.'),
+      el('div', { class: 'inv-line' }, '2. Goods once produced cannot be cancelled.'),
+      el('div', { class: 'inv-line' }, '3. Quality complaints accepted within 3 days of delivery.')
+    ));
+
+    sheet.appendChild(el('div', { class: 'inv-signs' },
+      el('div', { class: 'inv-sign' },
+        el('div', { class: 'inv-sign-line' }),
+        el('div', { class: 'inv-sign-label' }, 'Customer signature')
+      ),
+      el('div', { class: 'inv-sign' },
+        el('div', { class: 'inv-sign-line' }),
+        el('div', { class: 'inv-sign-label' }, 'For ' + (shop.name || 'Workshop'))
+      )
+    ));
+
+    sheet.appendChild(el('div', { class: 'inv-foot no-print' },
+      'Generated by DarziMate · ' + new Date().toLocaleString('en-IN')
+    ));
+  });
+}
+
+function printWorkerPayslip(workerId, opts = {}) {
+  const w = Domain.userById(workerId);
+  if (!w) return toast('Worker not found', 'error');
+  const fromDate = opts.fromDate || daysAgo(30);
+  const toDate   = opts.toDate   || today();
+  const entries = Domain.entriesForWorker(workerId, fromDate, toDate);
+  const pays = Domain.paymentsByPayee(workerId)
+    .filter(p => p.date >= fromDate && p.date <= toDate);
+  const earned = Domain.workerEarned(workerId);
+  const paid   = Domain.workerPaid(workerId);
+  const balance = earned - paid;
+  const periodEarned = entries.reduce((s, e) => {
+    const a = Domain.assignmentById(e.assignment_id);
+    return s + (a ? e.pieces_done * a.rate : 0);
+  }, 0);
+  const periodPaid = pays.reduce((s, p) => s + Number(p.amount), 0);
+  const shop = Store.data.shop || {};
+  const me = App.user;
+  const slipNo = 'PS-' + new Date().getFullYear() + '-' + workerId.slice(-6).toUpperCase();
+
+  openInvoicePreview((sheet) => {
+    sheet.appendChild(el('div', { class: 'inv-header' },
+      el('div', { class: 'inv-from' },
+        el('div', { class: 'inv-from-label' }, 'WORKSHOP'),
+        el('div', { class: 'inv-from-name' }, shop.name || 'Workshop'),
+        shop.phone ? el('div', { class: 'inv-line' }, '☎ ' + shop.phone) : null,
+        me?.role === 'contractor' ? el('div', { class: 'inv-line' }, 'Contractor: ' + me.name) : null
+      ),
+      el('div', { class: 'inv-doc' },
+        el('div', { class: 'inv-doc-title' }, 'PAYSLIP'),
+        invoiceMeta('Payslip #', slipNo),
+        invoiceMeta('Issued', fmtDate(today())),
+        invoiceMeta('Period', fmtDate(fromDate) + ' – ' + fmtDate(toDate))
+      )
+    ));
+
+    sheet.appendChild(el('div', { class: 'inv-billto' },
+      el('div', { class: 'inv-billto-label' }, 'PAYABLE TO'),
+      el('div', { class: 'inv-billto-name' }, w.name),
+      el('div', { class: 'inv-line' }, w.mobile || ''),
+      el('div', { class: 'inv-line' }, 'Role: Worker')
+    ));
+
+    // Production entries
+    sheet.appendChild(el('div', { class: 'inv-section-label' }, 'PRODUCTION (this period)'));
+    const prodTable = el('table', { class: 'inv-items' });
+    prodTable.appendChild(el('thead', null,
+      el('tr', null,
+        el('th', { class: 'col-no' }, '#'),
+        el('th', { class: 'col-desc' }, 'Date · Work'),
+        el('th', { class: 'col-num' }, 'Pcs'),
+        el('th', { class: 'col-num' }, 'Rate'),
+        el('th', { class: 'col-num' }, 'Earned')
+      )
+    ));
+    const ptbody = el('tbody');
+    if (entries.length === 0) {
+      ptbody.appendChild(el('tr', null,
+        el('td', { colspan: 5, class: 'inv-empty-cell' }, 'No production entries in this period')
+      ));
+    } else {
+      entries.forEach((e, i) => {
+        const a = Domain.assignmentById(e.assignment_id);
+        const pt = a ? Domain.pieceTypeById(a.piece_type_id) : null;
+        const lot = a ? Domain.lotById(a.lot_id) : null;
+        const amt = a ? e.pieces_done * a.rate : 0;
+        ptbody.appendChild(el('tr', null,
+          el('td', { class: 'col-no' }, String(i + 1)),
+          el('td', { class: 'col-desc' },
+            el('div', { class: 'inv-item-title' }, fmtDate(e.date) + ' · ' + (pt?.name || 'Piece')),
+            lot ? el('div', { class: 'inv-item-sub' }, 'Lot #' + lot.lot_no) : null
+          ),
+          el('td', { class: 'col-num' }, String(e.pieces_done)),
+          el('td', { class: 'col-num' }, a ? fmtINR(a.rate) : '—'),
+          el('td', { class: 'col-num' }, fmtINR(amt))
+        ));
+      });
+    }
+    prodTable.appendChild(ptbody);
+    sheet.appendChild(prodTable);
+
+    // Payments
+    sheet.appendChild(el('div', { class: 'inv-section-label' }, 'PAYMENTS RECEIVED'));
+    const payTable = el('table', { class: 'inv-items' });
+    payTable.appendChild(el('thead', null,
+      el('tr', null,
+        el('th', { class: 'col-no' }, '#'),
+        el('th', { class: 'col-desc' }, 'Date · Type'),
+        el('th', { class: 'col-num' }, 'Method'),
+        el('th', { class: 'col-num' }, 'Amount')
+      )
+    ));
+    const yt = el('tbody');
+    if (pays.length === 0) {
+      yt.appendChild(el('tr', null,
+        el('td', { colspan: 4, class: 'inv-empty-cell' }, 'No payments in this period')
+      ));
+    } else {
+      pays.forEach((p, i) => {
+        yt.appendChild(el('tr', null,
+          el('td', { class: 'col-no' }, String(i + 1)),
+          el('td', { class: 'col-desc' },
+            el('div', { class: 'inv-item-title' }, fmtDate(p.date) + ' · ' + (p.type || '').replace('_', ' '))
+          ),
+          el('td', { class: 'col-num' }, p.method || '—'),
+          el('td', { class: 'col-num' }, fmtINR(p.amount))
+        ));
+      });
+    }
+    payTable.appendChild(yt);
+    sheet.appendChild(payTable);
+
+    // Period totals + lifetime balance
+    sheet.appendChild(el('div', { class: 'inv-totals' },
+      invoiceMeta('Period earnings',  fmtINR(periodEarned)),
+      invoiceMeta('Period payments',  fmtINR(periodPaid)),
+      invoiceMeta('Lifetime earned',  fmtINR(earned)),
+      invoiceMeta('Lifetime paid',    fmtINR(paid)),
+      el('div', { class: 'inv-grand' },
+        el('span', null, 'BALANCE TO RECEIVE'),
+        el('span', null, fmtINR(balance))
+      ),
+      el('div', { class: 'inv-words' }, numberToINRWords(Math.abs(balance)))
+    ));
+
+    sheet.appendChild(el('div', { class: 'inv-signs' },
+      el('div', { class: 'inv-sign' },
+        el('div', { class: 'inv-sign-line' }),
+        el('div', { class: 'inv-sign-label' }, w.name + ' (worker)')
+      ),
+      el('div', { class: 'inv-sign' },
+        el('div', { class: 'inv-sign-line' }),
+        el('div', { class: 'inv-sign-label' }, (me?.name || 'Contractor') + ' (issued by)')
+      )
+    ));
+
+    sheet.appendChild(el('div', { class: 'inv-foot no-print' },
+      'Generated by DarziMate · ' + new Date().toLocaleString('en-IN')
+    ));
+  });
+}
+
 /* ─── Settings modal ──────────────────────────────────────── */
 function settingsModal() {
-  const wrap = el('div');
-  wrap.appendChild(el('h2', null, 'Settings'));
+  const wrap = el('div', { class: 'settings-screen' });
 
   const u = App.user;
   if (!u) {
+    wrap.appendChild(el('h2', null, 'Settings'));
     wrap.appendChild(el('div', { class: 'muted' }, 'Sign in first.'));
     return wrap;
   }
 
-  // ── Profile ──
-  const fileInput = el('input', { type: 'file', accept: 'image/*', style: 'display:none' });
-  fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+  // Role-based sections — different rows for each role.
+  const ROLE_SECTIONS = {
+    software_admin: [
+      { key: 'profile',       icon: '👤', title: 'My Profile',         subtitle: 'Photo, name, mobile' },
+      { key: 'upi',           icon: '💳', title: 'UPI Payments',        subtitle: 'For owner subscription payments', tone: 'accent' },
+      { key: 'plans',         icon: '💰', title: 'Subscription Plans',  subtitle: 'Edit plan prices', tone: 'accent' },
+      { key: 'notifications', icon: '🔔', title: 'Notifications',       subtitle: 'Toast popups on / off' },
+      { key: 'theme',         icon: '🎨', title: 'Appearance',          subtitle: 'Light · Midnight · Forest · Cream' },
+      { key: 'lang',          icon: '🌐', title: 'Language',            subtitle: 'English · Hindi · Marathi' }
+    ],
+    admin: [
+      { key: 'profile',       icon: '👤', title: 'My Profile',          subtitle: 'Photo, name, mobile' },
+      { key: 'business',      icon: '🏪', title: 'Business Info',       subtitle: 'Workshop name, address, phone' },
+      { key: 'pricing',       icon: '🧮', title: 'Pricing & Payments',  subtitle: 'UPI, default piece-rate', tone: 'accent' },
+      { key: 'notifications', icon: '🔔', title: 'Notifications',       subtitle: 'Toast popups on / off' },
+      { key: 'theme',         icon: '🎨', title: 'Appearance',          subtitle: 'Light · Midnight · Forest · Cream' },
+      { key: 'lang',          icon: '🌐', title: 'Language',            subtitle: 'English · Hindi · Marathi' }
+    ],
+    contractor: [
+      { key: 'profile',       icon: '👤', title: 'My Profile',          subtitle: 'Photo, name, mobile' },
+      { key: 'notifications', icon: '🔔', title: 'Notifications',       subtitle: 'Toast popups on / off' },
+      { key: 'theme',         icon: '🎨', title: 'Appearance',          subtitle: 'Light · Midnight · Forest · Cream' },
+      { key: 'lang',          icon: '🌐', title: 'Language',            subtitle: 'English · Hindi · Marathi' }
+    ],
+    worker: [
+      { key: 'profile',       icon: '👤', title: 'My Profile',          subtitle: 'Photo, name, mobile' },
+      { key: 'notifications', icon: '🔔', title: 'Notifications',       subtitle: 'Toast popups on / off' },
+      { key: 'theme',         icon: '🎨', title: 'Appearance',          subtitle: 'Light · Midnight · Forest · Cream' },
+      { key: 'lang',          icon: '🌐', title: 'Language',            subtitle: 'English · Hindi · Marathi' }
+    ]
+  };
+  const sections = ROLE_SECTIONS[u.role] || ROLE_SECTIONS.worker;
+
+  let view = 'list'; // 'list' | section.key
+
+  // Two hidden file inputs: one forces the device camera (capture="environment"),
+  // the other is a plain file picker so the OS shows the photo gallery.
+  // On most Android browsers a single input shows a chooser, but explicit camera /
+  // gallery buttons are clearer and matches WhatsApp/iOS conventions.
+  async function applyPhotoFile(file) {
     try {
       const photo = await resizeImage(file, 256);
       const me = Domain.userById(u.id);
       if (me) me.photo = photo;
       App.user.photo = photo;
       Store.save();
-      // Also push immediately so the new photo lands across devices fast
-      if (sb) {
-        try { await sb.from('users').update({ photo }).eq('id', u.id); } catch {}
-      }
+      if (sb) { try { await sb.from('users').update({ photo }).eq('id', u.id); } catch {} }
       toast('Photo updated', 'success');
-      // Re-open to show it
-      closeModal();
-      openModal(settingsModal());
+      paint();
     } catch (err) {
       toast(err.message || 'Could not save photo', 'error');
     }
-  });
+  }
+  const cameraInput  = el('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
+  const galleryInput = el('input', { type: 'file', accept: 'image/*', style: 'display:none' });
+  cameraInput.addEventListener('change',  (e) => { const f = e.target.files?.[0]; if (f) applyPhotoFile(f); e.target.value = ''; });
+  galleryInput.addEventListener('change', (e) => { const f = e.target.files?.[0]; if (f) applyPhotoFile(f); e.target.value = ''; });
+  wrap.appendChild(cameraInput);
+  wrap.appendChild(galleryInput);
 
-  const photoEl = el('div', {
-    class: 'avatar' + (u.photo ? ' has-photo' : ''),
-    style: 'width:80px;height:80px;font-size:34px;cursor:pointer;flex-shrink:0' +
-           (u.photo ? `;background-image:url(${u.photo})` : ''),
-    onclick: () => fileInput.click()
-  }, u.photo ? '' : (u.name?.[0] || '?').toUpperCase());
+  async function removePhoto() {
+    const me = Domain.userById(u.id);
+    if (me) me.photo = null;
+    App.user.photo = null;
+    Store.save();
+    if (sb) { try { await sb.from('users').update({ photo: null }).eq('id', u.id); } catch {} }
+    toast('Photo removed', '');
+    paint();
+  }
 
-  const profileCard = el('div', { class: 'card' },
-    el('div', { class: 'muted', style: 'font-size:12px;letter-spacing:.04em;margin-bottom:8px' }, 'PROFILE'),
-    el('div', { class: 'row gap-12', style: 'align-items:center' },
-      photoEl,
-      el('div', { style: 'flex:1;min-width:0' },
-        el('div', { style: 'font-weight:700;font-size:16px' }, u.name || '—'),
-        el('div', { class: 'muted' }, u.mobile || ''),
-        el('div', { class: 'muted', style: 'font-size:12px' }, 'Role: ' + (u.role || 'user').replace('_', ' ')),
-        el('button', {
-          class: 'btn ghost sm', style: 'padding:4px 0',
-          onclick: () => fileInput.click()
-        }, '📷  Change photo')
+  // Pop an action sheet for picking Camera vs Gallery (vs Remove if a photo
+  // already exists). Renders above the settings modal with its own backdrop.
+  function showPhotoSheet() {
+    const sheet = el('div', { class: 'photo-sheet' });
+    const backdrop = el('div', { class: 'photo-sheet-backdrop', onclick: close });
+    const panel = el('div', { class: 'photo-sheet-panel' });
+    function close() { sheet.remove(); }
+
+    panel.appendChild(el('div', { class: 'photo-sheet-grab' }));
+    panel.appendChild(el('div', { class: 'photo-sheet-title' }, u.photo ? 'Change profile photo' : 'Add profile photo'));
+
+    panel.appendChild(el('button', {
+      type: 'button', class: 'photo-sheet-btn',
+      onclick: () => { close(); cameraInput.click(); }
+    },
+      el('span', { class: 'photo-sheet-ico primary' }, '📷'),
+      el('span', { class: 'photo-sheet-text' },
+        el('span', { class: 'photo-sheet-name' }, 'Take a photo'),
+        el('span', { class: 'photo-sheet-sub'  }, 'Use the device camera')
       )
-    ),
-    fileInput
-  );
-  wrap.appendChild(profileCard);
+    ));
 
-  // ── Theme picker ──
-  const current = getTheme();
-  const themeCard = el('div', { class: 'card' },
-    el('div', { class: 'muted', style: 'font-size:12px;letter-spacing:.04em;margin-bottom:8px' }, 'THEME'),
-    el('div', { class: 'col' },
-      ...THEMES.map(t => el('button', {
-        type: 'button',
-        class: 'list-item' + (current === t.key ? '' : ''),
-        style: 'cursor:pointer' + (current === t.key ? ';border-color:var(--c-primary);background:var(--c-primary-50)' : ''),
-        onclick: () => {
-          applyTheme(t.key);
+    panel.appendChild(el('button', {
+      type: 'button', class: 'photo-sheet-btn',
+      onclick: () => { close(); galleryInput.click(); }
+    },
+      el('span', { class: 'photo-sheet-ico accent' }, '🖼️'),
+      el('span', { class: 'photo-sheet-text' },
+        el('span', { class: 'photo-sheet-name' }, 'Choose from gallery'),
+        el('span', { class: 'photo-sheet-sub'  }, 'Pick an existing image')
+      )
+    ));
+
+    if (u.photo) {
+      panel.appendChild(el('button', {
+        type: 'button', class: 'photo-sheet-btn',
+        onclick: () => { close(); removePhoto(); }
+      },
+        el('span', { class: 'photo-sheet-ico danger' }, '🗑️'),
+        el('span', { class: 'photo-sheet-text' },
+          el('span', { class: 'photo-sheet-name', style: 'color:var(--c-danger)' }, 'Remove photo'),
+          el('span', { class: 'photo-sheet-sub' }, 'Go back to initials avatar')
+        )
+      ));
+    }
+
+    panel.appendChild(el('button', {
+      type: 'button', class: 'photo-sheet-cancel',
+      onclick: close
+    }, 'Cancel'));
+
+    sheet.appendChild(backdrop);
+    sheet.appendChild(panel);
+    document.body.appendChild(sheet);
+  }
+
+  function backRow(label) {
+    return el('div', { class: 'sett-subpage-head' },
+      el('button', {
+        type: 'button', class: 'sett-back-btn', 'aria-label': 'Back',
+        onclick: () => { view = 'list'; paint(); }
+      }, '←'),
+      el('span', { class: 'sett-subpage-title' }, label)
+    );
+  }
+
+  function renderProfileCard() {
+    const card = el('div', {
+      class: 'profile-card' + (u.photo ? ' has-photo' : ''),
+      style: u.photo ? `background-image:linear-gradient(rgba(55,48,163,0.55),rgba(67,56,202,0.55))` : ''
+    });
+    card.appendChild(el('div', {
+      class: 'avatar',
+      style: u.photo ? `background-image:url(${u.photo})` : ''
+    }, u.photo ? '' : (u.name?.[0] || '?').toUpperCase()));
+    card.appendChild(el('div', { style: 'flex:1;min-width:0' },
+      el('div', { class: 'name' }, u.name || '—'),
+      el('div', { class: 'meta' }, (u.mobile || '') + ' · ' + (u.role || 'user').replace('_', ' '))
+    ));
+    card.appendChild(el('button', {
+      class: 'edit-photo', type: 'button',
+      onclick: () => showPhotoSheet()
+    }, u.photo ? '✏️ Change' : '📷 Add photo'));
+    return card;
+  }
+
+  function paint() {
+    wrap.querySelectorAll(':scope > .__sect').forEach(n => n.remove());
+    const slot = el('div', { class: '__sect' });
+
+    if (view === 'list') {
+      slot.appendChild(renderProfileCard());
+
+      const list = el('div', { class: 'sett-list' });
+      sections.forEach(sec => {
+        list.appendChild(el('button', {
+          type: 'button',
+          class: 'sett-row' + (sec.tone ? ' ' + sec.tone : ''),
+          onclick: () => { view = sec.key; paint(); }
+        },
+          el('span', { class: 'sett-row-icon' }, sec.icon),
+          el('span', { class: 'sett-row-body' },
+            el('span', { class: 'sett-row-title' }, sec.title),
+            el('span', { class: 'sett-row-sub' }, sec.subtitle)
+          ),
+          el('span', { class: 'sett-row-arrow' }, '›')
+        ));
+      });
+      slot.appendChild(list);
+
+      slot.appendChild(el('button', {
+        class: 'btn full danger', style: 'margin-top:6px',
+        onclick: async () => {
+          if (!confirm('Sign out?')) return;
+          await Auth.signOut();
+          App.user = null; App.route = 'login'; App.detail = null;
           closeModal();
-          openModal(settingsModal());
-          toast('Theme: ' + t.label, 'success');
+          window.DarziMate?.render?.();
+        }
+      }, '↩  Sign out'));
+
+      slot.appendChild(el('div', {
+        class: 'muted', style: 'text-align:center;font-size:12px;margin-top:6px'
+      }, 'DarziMate · v' + APP_VERSION));
+
+      wrap.appendChild(slot);
+      return;
+    }
+
+    const sec = sections.find(s => s.key === view);
+    slot.appendChild(backRow((sec.icon ? sec.icon + '  ' : '') + sec.title));
+    const body = el('div', { class: 'sett-subpage-body' });
+    slot.appendChild(body);
+    wrap.appendChild(slot);
+
+    // ── Profile ────────────────────────────────────────────
+    if (view === 'profile') {
+      body.appendChild(renderProfileCard());
+      const me = Domain.userById(u.id) || u;
+      const fName  = el('input', { class: 'input', type: 'text', value: me.name || '' });
+      const fMob   = el('input', { class: 'input', type: 'tel', inputmode: 'numeric', maxlength: 10, value: me.mobile || '' });
+      const grid = el('div', { style: 'margin-top:14px' });
+      grid.appendChild(el('div', { class: 'field' }, el('label', null, 'Full name'),  fName));
+      grid.appendChild(el('div', { class: 'field' }, el('label', null, 'Mobile (10 digits)'), fMob));
+      grid.appendChild(el('button', {
+        class: 'btn full',
+        onclick: async () => {
+          const name = fName.value.trim();
+          const mob  = fMob.value.replace(/\D/g, '');
+          if (!name) return toast('Enter your name', 'error');
+          if (mob.length !== 10) return toast('Mobile must be 10 digits', 'error');
+          me.name = name; me.mobile = mob;
+          App.user.name = name; App.user.mobile = mob;
+          Store.save();
+          if (sb) { try { await sb.from('users').update({ name, mobile: mob }).eq('id', u.id); } catch {} }
+          toast('Profile saved', 'success');
+        }
+      }, 'Save'));
+      body.appendChild(grid);
+    }
+
+    // ── Business Info (owner only) ─────────────────────────
+    else if (view === 'business') {
+      const shop = Store.data.shop || {};
+      const fBName = el('input', { class: 'input', type: 'text', value: shop.name || '' });
+      const fBAddr = el('textarea', { class: 'input', rows: 2, placeholder: 'Workshop address' });
+      fBAddr.value = shop.address || '';
+      const fBPh   = el('input', { class: 'input', type: 'tel', value: shop.phone || '' });
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'Workshop name'),    fBName));
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'Address'),          fBAddr));
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'Business phone'),   fBPh));
+      body.appendChild(el('button', {
+        class: 'btn full',
+        onclick: async () => {
+          shop.name    = fBName.value.trim();
+          shop.address = fBAddr.value.trim();
+          shop.phone   = fBPh.value.trim();
+          Store.save();
+          if (sb && shop.id) {
+            try { await sb.from('shops').update({ name: shop.name, address: shop.address, phone: shop.phone }).eq('id', shop.id); } catch {}
+          }
+          toast('Business info saved', 'success');
+        }
+      }, 'Save'));
+
+      // ── Danger zone: owner can hard-delete their own workshop ──
+      // Mirrors the software-admin Danger zone on the workshop detail page.
+      // RLS (shops_delete + users_delete) already permits the owner; here we
+      // wire up the UI + the post-delete sign-out so they don't land on a
+      // ghost screen pointing at a row that no longer exists.
+      slot.appendChild(el('div', {
+        class: 'card',
+        style: 'background:var(--c-danger-50);border-color:transparent;margin-top:18px'
+      },
+        el('div', { style: 'font-weight:700;color:var(--c-danger);margin-bottom:6px' }, '⚠️ Danger zone'),
+        el('div', { class: 'muted', style: 'font-size:13px;margin-bottom:12px' },
+          'Permanently delete ' + (shop?.name || 'your workshop') + ' along with every order, lot, ' +
+          'worker assignment, production entry and payment recorded against it. You will be signed out. Cannot be undone.'),
+        el('button', {
+          class: 'btn full danger',
+          onclick: async () => {
+            if (!confirm('Permanently delete "' + (shop?.name || 'your workshop') + '" and ALL its data? This cannot be undone.')) return;
+            const t = prompt('Type DELETE in capitals to confirm:');
+            if (t !== 'DELETE') { toast('Not confirmed — cancelled', ''); return; }
+            try {
+              await Domain.deleteAdminAndData(App.user.id);
+              await Auth.signOut();
+              App.user = null; App.route = 'login'; App.detail = null;
+              closeModal();
+              toast('Workshop deleted', 'success');
+              window.DarziMate?.render?.();
+            } catch (e) { toast(e.message, 'error'); }
+          }
+        }, '🗑️ Delete this workshop')
+      ));
+    }
+
+    // ── Pricing & Payments (owner) ─────────────────────────
+    else if (view === 'pricing') {
+      const shop = Store.data.shop || {};
+      const fUpi   = el('input', { class: 'input', type: 'text', placeholder: 'owner@upi', value: shop.upi_id || '' });
+      const fUpiNm = el('input', { class: 'input', type: 'text', placeholder: 'Workshop name on UPI', value: shop.upi_name || '' });
+      const fRate  = el('input', { class: 'input', type: 'number', min: 0, value: shop.default_rate ?? '' });
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'UPI ID'),               fUpi));
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'UPI display name'),     fUpiNm));
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'Default piece-rate (₹)'), fRate));
+      body.appendChild(el('button', {
+        class: 'btn accent full',
+        onclick: async () => {
+          shop.upi_id       = fUpi.value.trim();
+          shop.upi_name     = fUpiNm.value.trim();
+          shop.default_rate = Number(fRate.value) || 0;
+          Store.save();
+          if (sb && shop.id) {
+            try { await sb.from('shops').update({ upi_id: shop.upi_id, upi_name: shop.upi_name, default_rate: shop.default_rate }).eq('id', shop.id); } catch {}
+          }
+          toast('Pricing saved', 'success');
+        }
+      }, 'Save'));
+    }
+
+    // ── UPI Payments (software admin) ──────────────────────
+    else if (view === 'upi') {
+      const cur = getAdminUpi();
+      const fUpi   = el('input', { class: 'input', type: 'text', placeholder: 'admin@upi', value: cur.upiId || '' });
+      const fUpiNm = el('input', { class: 'input', type: 'text', placeholder: 'DarziMate Admin', value: cur.upiName || '' });
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'UPI ID'),           fUpi));
+      body.appendChild(el('div', { class: 'field' }, el('label', null, 'UPI display name'), fUpiNm));
+      body.appendChild(el('div', { class: 'muted', style: 'font-size:12px;margin:4px 0 12px' },
+        'Owners see this UPI on the subscription renewal screen.'));
+      body.appendChild(el('button', {
+        class: 'btn accent full',
+        onclick: () => {
+          setAdminUpi({ upiId: fUpi.value.trim(), upiName: fUpiNm.value.trim() });
+          toast('UPI saved', 'success');
+        }
+      }, 'Save'));
+    }
+
+    // ── Subscription Plans (software admin) ────────────────
+    else if (view === 'plans') {
+      const plans = getPlans();
+      const inputs = plans.map(p => {
+        const ip = el('input', { class: 'input', type: 'number', min: 0, value: p.price, style: 'width:120px;text-align:right' });
+        const row = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px' },
+          el('div', null,
+            el('div', { style: 'font-weight:700' }, p.name),
+            el('div', { class: 'muted', style: 'font-size:12px' }, p.duration_days + ' days')
+          ),
+          el('div', { style: 'display:flex;align-items:center;gap:6px' },
+            el('span', { class: 'muted' }, '₹'),
+            ip
+          )
+        );
+        body.appendChild(row);
+        return { p, ip };
+      });
+      body.appendChild(el('button', {
+        class: 'btn accent full', style: 'margin-top:6px',
+        onclick: () => {
+          const next = inputs.map(({ p, ip }) => ({ ...p, price: Math.max(0, Number(ip.value) || 0) }));
+          setPlans(next);
+          toast('Plans saved', 'success');
+        }
+      }, 'Save plans'));
+    }
+
+    // ── Notifications ──────────────────────────────────────
+    else if (view === 'notifications') {
+      const enabled = getNotifEnabled();
+      const sw = el('div', { class: 'sett-switch' + (enabled ? ' on' : '') });
+      const row = el('button', {
+        type: 'button',
+        class: 'sett-radio-row',
+        onclick: () => {
+          const now = !sw.classList.contains('on');
+          sw.classList.toggle('on', now);
+          setNotifEnabled(now);
+          toast(now ? 'Notifications on' : 'Notifications off', 'success');
         }
       },
-        el('div', {
-          class: 'avatar',
-          style: 'background:' + t.preview + ';color:#fff'
-        }, current === t.key ? '✓' : ''),
-        el('div', { class: 'meta' },
-          el('div', { class: 'name' }, t.label)
-        )
-      ))
-    )
-  );
-  wrap.appendChild(themeCard);
-
-  // ── Sign out ──
-  wrap.appendChild(el('button', {
-    class: 'btn full danger mt-12',
-    onclick: async () => {
-      if (!confirm('Sign out?')) return;
-      await Auth.signOut();
-      App.user = null; App.route = 'login'; App.detail = null;
-      closeModal();
-      render();
+        el('span', { class: 'sett-radio-text' },
+          el('span', { class: 'sett-radio-title' }, 'Show toast popups'),
+          el('span', { class: 'sett-radio-sub' }, 'Quick confirmations after every action')
+        ),
+        sw
+      );
+      body.appendChild(row);
     }
-  }, 'Sign out'));
 
-  // ── About ──
-  wrap.appendChild(el('div', { class: 'muted', style: 'text-align:center;font-size:12px;margin-top:16px' },
-    'DarziMate · v1'));
+    // ── Appearance / theme ─────────────────────────────────
+    else if (view === 'theme') {
+      const current = getTheme();
+      THEMES.forEach(t => {
+        const selected = current === t.key;
+        body.appendChild(el('button', {
+          type: 'button',
+          class: 'sett-radio-row' + (selected ? ' selected' : ''),
+          onclick: () => {
+            applyTheme(t.key);
+            toast('Theme: ' + t.label, 'success');
+            paint();
+          }
+        },
+          el('span', { class: 'sett-radio-text' },
+            el('span', { class: 'sett-radio-title' }, t.label),
+            el('span', { class: 'sett-radio-sub' }, t.preview)
+          ),
+          el('span', { class: 'sett-radio-tick' }, selected ? '✓' : '')
+        ));
+      });
+    }
+
+    // ── Language ───────────────────────────────────────────
+    else if (view === 'lang') {
+      const cur = getLang();
+      LANGS.forEach(L => {
+        const selected = cur === L.key;
+        body.appendChild(el('button', {
+          type: 'button',
+          class: 'sett-radio-row' + (selected ? ' selected' : ''),
+          onclick: () => {
+            setLang(L.key);
+            toast('Language: ' + L.label, 'success');
+            paint();
+          }
+        },
+          el('span', { class: 'sett-radio-text' },
+            el('span', { class: 'sett-radio-title' }, L.label)
+          ),
+          el('span', { class: 'sett-radio-tick' }, selected ? '✓' : '')
+        ));
+      });
+    }
+  }
+
+  paint();
   return wrap;
 }
 

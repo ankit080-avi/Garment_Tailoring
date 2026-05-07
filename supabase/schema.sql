@@ -312,14 +312,44 @@ create policy ac_admin_write on admin_contractors for all
   with check (is_software_admin() or (admin_id = auth.uid()::text and current_role_in_shop() = 'admin'));
 
 -- DESIGNS / PIECE_TYPES
+-- Contractors need to see designs + piece_types for any lot they're assigned
+-- to so they can pick the right piece-type when assigning work to a worker.
+-- Workers similarly need read-access for the lots they're working on so the
+-- "Pieces done today" form can show the rate.
 create policy designs_select on designs for select
-  using (is_software_admin() or shop_id = current_shop_id());
+  using (
+    is_software_admin()
+    or shop_id = current_shop_id()
+    or exists (
+      select 1 from orders o join lots l on l.order_id = o.id
+      where o.design_id = designs.id and l.contractor_id = auth.uid()::text
+    )
+    or exists (
+      select 1 from orders o
+      join lots l on l.order_id = o.id
+      join worker_assignments wa on wa.lot_id = l.id
+      where o.design_id = designs.id and wa.worker_id = auth.uid()::text
+    )
+  );
 create policy designs_admin_write on designs for all
   using (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'))
   with check (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'));
 
 create policy piece_types_select on piece_types for select
-  using (is_software_admin() or shop_id = current_shop_id());
+  using (
+    is_software_admin()
+    or shop_id = current_shop_id()
+    or exists (
+      select 1 from orders o join lots l on l.order_id = o.id
+      where o.design_id = piece_types.design_id and l.contractor_id = auth.uid()::text
+    )
+    or exists (
+      select 1 from orders o
+      join lots l on l.order_id = o.id
+      join worker_assignments wa on wa.lot_id = l.id
+      where o.design_id = piece_types.design_id and wa.worker_id = auth.uid()::text
+    )
+  );
 create policy piece_types_admin_write on piece_types for all
   using (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'))
   with check (is_software_admin() or (shop_id = current_shop_id() and current_role_in_shop() = 'admin'));
