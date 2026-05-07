@@ -543,14 +543,23 @@ const Domain = {
 
     if (sb) {
       if (shopId) {
-        const { error: e1 } = await sb.from('shops').delete().eq('id', shopId);
+        // .select() so a silent RLS denial surfaces as "0 rows" instead of
+        // looking like success while the row stays in the database.
+        const { data: shopRows, error: e1 } = await sb.from('shops')
+          .delete().eq('id', shopId).select();
         if (e1) throw new Error('Could not delete shop: ' + e1.message);
+        if (!shopRows || shopRows.length === 0) {
+          throw new Error("Couldn't delete shop — your account isn't allowed to delete this row. Re-run supabase/schema.sql.");
+        }
       }
-      // Junction rows: delete ones referencing this admin (cascade also fires
-      // when we delete the user row, but doing it explicitly is clearer).
+      // Junction rows: delete is a no-op when there are no links — no count check.
       await sb.from('admin_contractors').delete().eq('admin_id', adminId);
-      const { error: e2 } = await sb.from('users').delete().eq('id', adminId);
+      const { data: userRows, error: e2 } = await sb.from('users')
+        .delete().eq('id', adminId).select();
       if (e2) throw new Error('Could not delete user: ' + e2.message);
+      if (!userRows || userRows.length === 0) {
+        throw new Error("Couldn't delete user — your account isn't allowed to delete this row. Re-run supabase/schema.sql.");
+      }
     }
 
     // Local cache: cascade by hand so the UI updates instantly without a remote round-trip.
@@ -1529,6 +1538,9 @@ function softwareAdminPending(wrap) {
             onclick: async () => {
               try {
                 await Domain.approveAdmin(a.id);
+                // Re-pull from server so any stale local row anywhere else
+                // in the cache (lots, contractors etc.) gets the fresh status.
+                await Store.loadFromRemote();
                 toast(a.name + ' approved', 'success');
                 render();
               } catch (e) { toast(e.message, 'error'); }
@@ -1540,6 +1552,7 @@ function softwareAdminPending(wrap) {
               if (!confirm('Reject ' + a.name + '?')) return;
               try {
                 await Domain.rejectAdmin(a.id);
+                await Store.loadFromRemote();
                 toast(a.name + ' rejected', '');
                 render();
               } catch (e) { toast(e.message, 'error'); }
@@ -1579,6 +1592,7 @@ function softwareAdminPending(wrap) {
           onclick: async () => {
             try {
               await Domain.approveAdmin(a.id);
+              await Store.loadFromRemote();
               toast(a.name + ' approved', 'success');
               render();
             } catch (e) { toast(e.message, 'error'); }
@@ -1592,6 +1606,7 @@ function softwareAdminPending(wrap) {
               '? This cannot be undone.')) return;
             try {
               await Domain.deleteAdminAndData(a.id);
+              await Store.loadFromRemote();
               toast(a.name + ' deleted', 'success');
               render();
             } catch (e) { toast(e.message, 'error'); }
