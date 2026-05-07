@@ -907,7 +907,16 @@ function navigate(opts = {}) {
   if (opts.detail !== undefined) App.detail = opts.detail;
   render();
 }
-function goTab(tab) { App.tab = tab; App.detail = null; render(); }
+function goTab(tab) {
+  App.tab = tab; App.detail = null; render();
+  // Software admin's Pending tab is the most time-sensitive view: a brand
+  // new owner signup must show up the moment the admin lands here, even if
+  // realtime is asleep or the local cache is stale. Fire-and-forget pull
+  // so the UI updates as soon as data arrives.
+  if (App.user && App.user.role === 'software_admin' && tab === 'pending' && REMOTE_ENABLED) {
+    Store.loadFromRemote().then(ok => { if (ok) render(); }).catch(() => {});
+  }
+}
 function goDetail(type, id) { App.detail = { type, id }; render(); }
 function goBack() { App.detail = null; render(); }
 
@@ -1211,13 +1220,26 @@ async function refreshApp() {
   const btn = document.querySelector('.topbar .refresh-btn');
   if (btn) { btn.textContent = '⏳'; btn.style.pointerEvents = 'none'; }
   try {
+    // Drop the realtime channel before re-pulling — re-subscribe right after
+    // so a dropped or stale connection (Wi-Fi flap, tab backgrounded) is rebuilt.
+    Store.unsubscribeRealtime();
     const ok = await Store.loadFromRemote();
     if (App.user) {
       const me = Store.data.users.find(u => u.id === App.user.id);
       if (me) App.user = me;
     }
+    if (ok) Store.subscribeRealtime();
     render();
-    toast(ok ? 'Refreshed' : 'No connection — local data only', ok ? 'success' : '');
+    if (ok) {
+      // Surface counts so the user can see exactly what came back from the
+      // server — "Refreshed" alone hides whether RLS filtered anything out.
+      const shops = (Store.data.shops || []).length;
+      const pending = (Store.data.users || []).filter(u => u.role === 'admin' && u.status === 'pending').length;
+      toast('Refreshed · ' + shops + ' workshop' + (shops === 1 ? '' : 's') +
+            ' · ' + pending + ' pending', 'success');
+    } else {
+      toast('No connection — local data only', '');
+    }
   } catch (e) {
     toast('Refresh failed: ' + (e.message || 'unknown error'), 'error');
     if (btn) { btn.textContent = '⟳'; btn.style.pointerEvents = ''; }
