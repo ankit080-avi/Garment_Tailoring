@@ -601,18 +601,30 @@ const Domain = {
     const linked = new Set(this.contractorsForAdmin(adminId).map(c => c.id));
     return this.allContractors().filter(c => !linked.has(c.id));
   },
-  linkAdminContractor(adminId, contractorId, notes) {
+  async linkAdminContractor(adminId, contractorId, notes) {
     if (this.adminContractorLinks().some(ac =>
       ac.admin_id === adminId && ac.contractor_id === contractorId && ac.status !== 'ended')) {
       throw new Error('Already linked');
     }
-    Store.data.admin_contractors.push({
+    const row = {
       id: uid('ac'), admin_id: adminId, contractor_id: contractorId,
       status: 'active', since: today(),
       notes: (notes || '').trim() || null,
       created_at: new Date().toISOString()
-    });
-    Store.save();
+    };
+    // Server-first: insert with .select() so a silent RLS denial surfaces as
+    // "0 rows" instead of being masked by the local push that the next
+    // realtime fetch would then clobber away.
+    if (sb) {
+      const { data, error } = await sb.from('admin_contractors')
+        .insert(row).select().single();
+      if (error) throw new Error('Could not link contractor: ' + error.message);
+      if (!data) throw new Error("Couldn't link contractor — your account isn't allowed to write this row.");
+      Store.data.admin_contractors.push(data);
+    } else {
+      Store.data.admin_contractors.push(row);
+    }
+    Store.saveCache();
   },
   unlinkAdminContractor(adminId, contractorId) {
     const link = this.adminContractorLinks().find(ac =>
@@ -671,29 +683,53 @@ const Domain = {
   },
 
   async addUser({ name, mobile, role, parent_user_id, password }) {
-    if (Store.data.users.some(u => u.mobile === mobile)) throw new Error('Mobile already registered');
-    const u = {
-      id: uid('u'), shop_id: role === 'admin' ? Store.data.shop.id : null,
-      mobile: mobile.trim(), name: name.trim(), role,
+    const m = String(mobile).trim();
+    if (Store.data.users.some(u => u.mobile === m && u.role === role)) {
+      throw new Error('Mobile already registered as ' + role);
+    }
+    const row = {
+      id: uid('u'), shop_id: role === 'admin' ? (Store.data.shop?.id || null) : null,
+      mobile: m, name: String(name).trim(), role,
       password_hash: await hashPassword(password || '1234'),
       parent_user_id: parent_user_id || null, photo: null,
       status: 'active', created_at: new Date().toISOString()
     };
-    Store.data.users.push(u);
-    Store.save();
-    return u;
+    if (sb) {
+      const { data, error } = await sb.from('users').insert(row).select().single();
+      if (error) throw new Error('Could not add ' + role + ': ' + error.message);
+      if (!data) throw new Error("Couldn't add " + role + " — your account isn't allowed to write this row.");
+      Store.data.users.push(data);
+      Store.saveCache();
+      return data;
+    }
+    Store.data.users.push(row);
+    Store.saveCache();
+    return row;
   },
   // Used by admin: create a new contractor AND link them in one go.
   async addContractorForAdmin({ name, mobile, password, adminId, notes }) {
     const c = await this.addUser({ name, mobile, role: 'contractor', password });
-    this.linkAdminContractor(adminId, c.id, notes);
+    await this.linkAdminContractor(adminId, c.id, notes);
     return c;
   },
   // Used by admin: link an existing contractor by mobile.
-  linkContractorByMobile(adminId, mobile, notes) {
-    const c = Store.data.users.find(u => u.role === 'contractor' && u.mobile === mobile.trim());
+  async linkContractorByMobile(adminId, mobile, notes) {
+    const m = String(mobile).trim();
+    let c = Store.data.users.find(u => u.role === 'contractor' && u.mobile === m);
+    // Local cache may be stale (contractor signed up on another device after
+    // last refresh) — fall back to a direct Supabase lookup so the owner
+    // doesn't get a misleading "no contractor found" error.
+    if (!c && sb) {
+      const { data, error } = await sb.from('users')
+        .select('*').eq('role', 'contractor').eq('mobile', m).maybeSingle();
+      if (error) throw new Error('Contractor lookup failed: ' + error.message);
+      if (data) {
+        c = data;
+        if (!Store.data.users.some(u => u.id === c.id)) Store.data.users.push(c);
+      }
+    }
     if (!c) throw new Error('No contractor found with that mobile');
-    this.linkAdminContractor(adminId, c.id, notes);
+    await this.linkAdminContractor(adminId, c.id, notes);
     return c;
   },
 
@@ -2448,9 +2484,9 @@ function addContractorForAdminForm() {
         'Pick a contractor already in the system, or enter their mobile.'));
       if (available.length > 0) {
         content.appendChild(el('div', { style: 'margin-bottom:8px' },
-          ...available.map(c => el('div', { class: 'list-item', onclick: () => {
+          ...available.map(c => el('div', { class: 'list-item', onclick: async () => {
             try {
-              Domain.linkAdminContractor(App.user.id, c.id);
+              await Domain.linkAdminContractor(App.user.id, c.id);
               toast('Linked ' + c.name, 'success');
               closeModal(); window.DarziMate.render();
             } catch (e) { toast(e.message, 'error'); }
@@ -2466,11 +2502,11 @@ function addContractorForAdminForm() {
       }
       // Or by mobile
       const f = el('form', {
-        onsubmit: (e) => {
+        onsubmit: async (e) => {
           e.preventDefault();
           const m = f.querySelector('input[name=mobile]').value.trim();
           try {
-            const c = Domain.linkContractorByMobile(App.user.id, m);
+            const c = await Domain.linkContractorByMobile(App.user.id, m);
             toast('Linked ' + c.name, 'success');
             closeModal(); window.DarziMate.render();
           } catch (err) { toast(err.message, 'error'); }
