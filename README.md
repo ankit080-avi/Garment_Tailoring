@@ -100,7 +100,7 @@ python -m http.server 8767 --directory D:\milkmate\Garment_Tailoring
 
 ### 3. Bump cache version
 
-Currently on **v=28**. Three files must bump together so the service worker
+Currently on **v=52**. Three files must bump together so the service worker
 picks up new code AND the topbar version stamp matches:
 
 - `index.html` — increment `?v=N` on `styles.css`, `supabase-config.js`, and `app.js`
@@ -113,7 +113,7 @@ picks up new code AND the topbar version stamp matches:
 <script src="app.js?v=N+1" defer></script>
 ```
 
-The topbar shows `v28` (or whatever the running version is) in the subtitle — invaluable for confirming a sticky service worker isn't keeping an old build alive on a phone.
+The topbar shows `v52` (or whatever the running version is) in the subtitle — invaluable for confirming a sticky service worker isn't keeping an old build alive on a phone.
 
 ### 4. Deploy to production
 
@@ -249,41 +249,55 @@ delete from auth.users;
 
 ### Software Admin
 - Cross-workshop dashboard: total workshops, pending applications, contractors, workers, total pieces, total paid out
-- **Pending applications** queue with one-tap Approve / Reject
+- **Pending applications** queue with one-tap Approve / Reject — auto-refreshes every 5s while open
 - **Workshops** list — drill into any workshop to see contractors, recent orders, production stats
 - **Hard delete workshop** with `DELETE` confirmation prompt — cascades through every order, lot, assignment, production entry and payment
 - 7-day cross-workshop reports
+- Settings: UPI Payments · Subscription Plans · Notifications · Appearance · Language
 
 ### Owner
 - Home dashboard — orders, in-progress lots, contractors linked, workers, total paid
-- **New bulk order** modal: design × total quantity × deadline
-- **Split order into lots** with per-lot quantity, then assign each lot inline to a linked contractor
-- **Designs & piece-rates** catalog (Cutting / Stitching / Finishing with editable rates)
+- **7-day free-trial banner** counting down from signup; flips to red `Renew` once expired
+- **New bulk order** modal: design × total quantity × deadline (with `+1w / +2w / +1mo / +2mo` chips)
+- **Split order into lots** — quick presets (`5×100`, `10×50`, Even-100) with live preview bar
+- **Lot detail** with contractor picker dropdown — change assignment any time
+- **Designs & piece-rates** catalog: card-based piece-type rows with quick-add chips (Cutting / Stitching / Finishing / Embroidery / Buttoning / Pressing) + live total per piece
 - Contractor list scoped to the workshop's roster only
-- "+ Add contractor" supports linking by mobile (existing contractor) OR creating + linking new
+- "+ Add contractor" supports linking by mobile (existing) OR creating + linking new
+- **Print Tax Invoice** for any order — numbered, GST-calculated, amount-in-words, terms, signature lines; in-app preview before `window.print()`
+- **Workshop delete** from Settings → Business Info (Danger zone)
 - 7-day reports scoped to the workshop
+- Settings: My Profile · Business Info · Pricing & Payments · Notifications · Appearance · Language
 
 ### Contractor
+- Home dashboard — my lots, workers, owners, pieces today, to pay workers
 - Lots assigned to them (across every Owner they work for)
 - **Lot detail** with worker assignments + per-assignment progress
+- **Assign work to worker** — piece-type chip selector (rate auto-fills), quantity quick-fills (`All / Half / 25 / 50`)
 - **Workers** roster with per-worker earnings, paid, balance
-- **Worker detail** drill-down: assignments, recent production entries, payment history; "Pay" button records a cash/UPI/bank settlement
-- **Bada Seths** tab — list of every owner they work for with lot count + active count per owner
+- **Worker detail** drill-down: assignments, recent production entries, payment history
+- **Pay button** opens payment form with amount chips (`Full / Half / ₹100 / ₹500`)
+- **Print Worker Payslip** — period production + payments + lifetime totals + dual signatures
+- **Owners** tab — list of every owner they work for with lot count + active count per owner
 
 ### Worker
 - **Big-tap "+ Pieces done today"** button on home — opens daily entry modal pre-filled with active assignment
+- **Log production** form: pieces increment chips (`+1 / +5 / +10 / +25 / +50 / All remaining`), date chips (`Today / Yesterday`)
 - Today / This week / Total earnings stat tiles, plus balance to receive
 - Production history (last 30 days)
 - Payments received history
 
 ### Cross-cutting
-- **Themes**: Light · indigo (default), Midnight (dark), Forest, Cream — switch in Settings
-- **Profile photo**: tap avatar in Settings → file picker → auto-resize 256 px JPEG → stored as base64 in `users.photo` → displays as topbar avatar across all devices
-- **Settings sheet** (gear icon top-right): profile, theme, sign out
-- **Refresh button** in topbar (`⟳`) to manually re-pull from Supabase
-- **Pull-to-refresh** gesture: drag down at the top of any page to re-pull (works in PWA + APK). Threshold 90 px, indicator arrow flips and turns primary-coloured at the release point so you know when you've pulled enough — feels closer to a native app.
+- **Themes**: Light · indigo (default), Midnight (dark), Forest, Cream — switch in Settings → Appearance
+- **SVG icon system** in tabbar / topbar / settings rows (Feather-style, `currentColor` stroke, ~27 icons)
+- **Profile photo** action sheet: 📷 Take a photo (rear camera) · 🖼️ Choose from gallery · 🗑️ Remove (auto-resize 256 px JPEG, base64 in `users.photo`)
+- **Settings sheet** (gear icon top-right) — MilkMate-style row list with role-specific sub-pages, profile gradient card, sign out
+- **Sticky form footer** — Cancel / Save buttons stay one tap away as the modal scrolls
+- **Refresh button** in topbar to manually re-pull from Supabase
+- **Pull-to-refresh** gesture: drag down at the top of any page (90 px threshold, native-style arrow flip)
 - **Pending approval screen** for new owners — auto-routes to dashboard after approval, or to Rejected screen on rejection
 - **Realtime sync** — changes propagate to other devices in ~1 second via Supabase Postgres-changes subscription
+- **Notifications toggle** in Settings — turns off success toasts (errors always surface)
 
 ---
 
@@ -302,9 +316,12 @@ First check: **look at the topbar subtitle on the device.** It always ends with 
 | "Couldn't approve / reject / delete — your account isn't allowed to update this user." | Old `users_update` / `users_delete` policy. Re-run the latest schema. |
 | Software admin doesn't see new pending application | Topbar must show `v27` or later (auto-refreshes Pending tab every 5s). If still missing, run `select id, mobile, name, role, status from public.users where status='pending';` in SQL editor — if the row isn't there, the new owner's signup failed; if it IS there, post the topbar version and we'll look at the cache. |
 | Approve / Reject / Delete looks like it succeeded but the row reappears later | Pre-v=18 / v=24 bug: `.update()` / `.delete()` had no `.select()`, so silent RLS denials looked like success. Make sure topbar shows `v24` or later, and re-run the latest schema. |
-| Owner stuck on "Waiting for approval" after admin approves/rejects | Pre-v=17 bug: realtime swapped `Store.data.users` but `App.user` stayed pinned to the stale object. Make sure topbar shows `v17` or later. |
-| New contractor added by Owner disappears after a few seconds | Pre-v=21 bug: contractor row was pushed to local cache only and the next realtime fetch wiped it. Make sure topbar shows `v21` or later. |
+| Owner stuck on "Waiting for approval" after admin approves/rejects | Pre-v=35 bug: PostgREST's bulk `select *` was serving a stale snapshot for the user's own row right after the approve UPDATE landed. Make sure topbar shows `v35` or later — `loadFromRemote` now refetches the current user's row via `.eq('id', uid)` filter which bypasses the stale cache. |
+| New contractor added by Owner disappears after a few seconds | Pre-v=36 bug: junction row landed in DB but the bulk `select *` from PostgREST didn't include it. Make sure topbar shows `v36` or later — own admin_contractors junctions are refetched via `.eq('admin_id', uid)` filter. |
 | Signup says "Profile insert blocked. Re-run supabase/schema.sql to refresh RLS policies." | Exactly what it says — re-run `supabase/schema.sql` in the SQL editor. The signup paths use `.insert().select().single()` and refuse to claim success on 0 rows. |
+| "Couldn't add contractor — Supabase blocked this insert" | Owner's session can't insert into `users` because `users_admin_insert` policy is missing from the deployed schema. Re-run the latest `supabase/schema.sql`. |
+| Contractor can't see designs / piece-types when assigning work | Pre-v=42 bug: `designs_select` and `piece_types_select` policies didn't allow contractors. Re-run the latest `supabase/schema.sql` — they now permit contractors and workers to read designs/piece-types for any lot they're working on. |
+| Newly created design / order / lot / payment doesn't show up locally even though DB has it | PostgREST stale-snapshot quirk on bulk `select *` after a fresh INSERT (~minutes). Versions ≥v=50 work around it by always refetching the current user's own users-row, shop, junctions, and payments via `.eq('id'/payer_id/payee_id', uid)` filtered queries. Pull-to-refresh forces a full reload. |
 
 ### Useful console commands
 
@@ -332,10 +349,17 @@ window.applyTheme && window.applyTheme('midnight')   // or 'default'/'forest'/'c
 2. **Photos in Supabase Storage** — currently base64 in DB column. Move to Storage bucket once volume justifies it.
 3. **Offline write queue** — reads work offline (localStorage cache). Writes currently fail silently if offline.
 4. **Push notifications** — when admin assigns a lot or contractor assigns work, the recipient should get a push. Same FCM pattern MilkMate uses, but unwired so far.
-5. **Subscription / billing** — no plan-based gating yet. Software admin approves but doesn't track payments per workshop.
-6. **PDF reports** — printable production summary, payslip per worker, settlement receipt.
-7. **i18n** — Hindi / Marathi translations of the UI strings.
-8. **Edit / soft-delete lots, orders, designs** — currently only hard-delete via Software Admin. Owner-level edits would help in real karkhana use.
+5. **Trial-expiry gating + UPI renewal sheet** — v=48 added the 7-day trial banner that flips red when expired; the actual gating (block New Order / Add Contractor and surface a UPI renewal sheet) is not yet wired.
+6. **Architecturally correct contractor/worker invite** — "Create new contractor" and "+ Add worker" forms write to `public.users` only, not `auth.users`, so the created user can't sign in. The pragmatic alternative is a WhatsApp invite deeplink (`wa.me/<mobile>?text=...`) so the contractor self-signs-up; not yet implemented.
+7. **i18n** — Hindi / Marathi translations of the UI strings; the language picker in Settings stores the preference but no translation tables exist yet.
+8. **Edit / soft-delete lots, orders, designs** — currently only hard-delete via Software Admin (or owner-side workshop delete). Owner-level edits to existing rows would help in real karkhana use.
+
+### Recently shipped
+- **Print invoices** (v=51, expanded v=52) — Tax Invoice for orders, Worker Payslip for workers.
+- **Workshop delete from owner side** (v=31) — Settings → Business Info → Danger zone.
+- **7-day free trial banner** (v=48) — counts down from owner's `created_at`.
+- **MilkMate-style Settings + SVG icons** (v=29 → v=44).
+- **Chip-driven forms** (v=45 → v=50) — pieces, deadlines, quantities, amounts.
 
 ---
 
@@ -351,6 +375,28 @@ If a new chat session starts and you want to continue:
 
 ## Changelog highlights
 
+- **v=52** — Tax invoice gets full tax-invoice format: invoice numbering scheme (`INV-YYYY-XXXXXX`), per-piece-type line items per lot, dark-header items table, GST 5% subtotal line, **GRAND TOTAL** pill in dark indigo, amount-in-words, payment block (auto-shows when admin UPI is set), terms, customer + workshop signature lines. Same treatment for `Worker Payslip` — period production + payments tables, period vs lifetime totals, `BALANCE TO RECEIVE` pill, dual signatures. Both render in an in-app preview modal with toolbar (`× Invoice preview` + **Print** button) before `window.print()`. `numberToINRWords()` helper handles up to 99,99,99,999.
+- **v=51** — First cut of printable invoices (basic tables + signature lines), `printer` SVG, print buttons wired into Order detail + Worker detail topbars, `@media print` CSS that strips the app chrome.
+- **v=50** — `loadFromRemote` extended to refetch the current user's `payments` (as payer/payee) via filtered queries to bypass PostgREST's stale-bulk-snapshot quirk. End-to-end payment flow verified: Ravi pays Sita ₹300, both views' balances flip immediately.
+- **v=49** — Chip patterns added to **Split Lots** (`5×100`, `10×50`, Even-100 presets + live preview bar) and **Log Production** (`+1 / +5 / +10 / +25 / +50 / All remaining` pieces, `Today / Yesterday` date). **Pay Worker** form gets `Full / Half / ₹100 / ₹500` amount chips.
+- **v=48** — `TRIAL_DAYS = 7` constant + `trialInfo(user)` helper. Owner home now opens with a free-trial banner: indigo gradient with hourglass icon, "Free trial · 7 days left · expires …" + 7d pill. Banner flips to a red gradient with `Renew` pill once expired.
+- **v=47** — **Add Order** deadline gets `+1 week / +2 weeks / +1 month / +2 months` chips. **Assign Worker** form: piece-type dropdown swapped for selectable chips with rate metadata; quantity field gets `All / Half / 25 / 50` quick-fills. New `.pt-chip.selected` style.
+- **v=46** — Sticky Cancel/Save bar at the bottom of every modal form (`.form-actions`). Modal sheet got a slim themed scrollbar + `overscroll-behavior: contain`.
+- **v=45** — Add Design redesigned with card-based piece-type rows (name + ₹ rate + remove button), live total bar, quick-add chips for common operations (Cutting / Stitching / Finishing / Embroidery / Buttoning / Pressing).
+- **v=44** — SVG icon system (Feather-style, ~27 icons). Tabbar / topbar / settings rows / photo-sheet all use `currentColor` SVGs instead of emojis. Active-tab indicator in indigo, others in muted.
+- **v=43** — `addPayment` made remote-aware with smart shop_id derivation (uses worker's assignment shop_id when payer is a contractor without a shop).
+- **v=42** — Schema patch: `designs_select` + `piece_types_select` extended so contractors and workers can read designs/piece-types for the lots they're working on. Reverted `loadFromRemote`'s `.order(id)` workaround (PostgREST cache cleared after the schema re-run).
+- **v=41** — Added explicit Supabase writes to `addAssignment` and `addProductionEntry`. Also auto-bumps `worker_assignments.status` and `lots.status` on the server when production lands.
+- **v=39** — Made `addDesign`, `addOrder`, `splitOrderIntoLots` write to Supabase directly via `.insert().select().single()` (was local-only writes that relied on the bulk `upsertAll` which silently failed on cross-tenant rows in the cache).
+- **v=38** — Owner-side `adminLotDetail` view added (was a blank page). Includes contractor picker dropdown — assignment is async + remote-aware via `Domain.assignLotToContractor`.
+- **v=36** — `Store.loadFromRemote` extended again to refetch the current user's own `admin_contractors` junctions via `.eq('admin_id'/contractor_id', uid)` so freshly-linked contractors don't disappear from the roster after the bulk staleness window.
+- **v=35** — `loadFromRemote` always fetches the user's own `users` row + `shops` row via `.eq('id', uid)` filtered queries, even when the bulk `select *` already returned them. Bypasses two PostgREST quirks: own-row hidden from bulk, and stale snapshot serving the pre-UPDATE state for ~minutes.
+- **v=34** — Defensive fallback in `loadFromRemote`: if the user's own row is missing from the bulk response, fetch it via `.eq('id', uid).maybeSingle()` and merge.
+- **v=33** — Profile photo picker becomes an action sheet: 📷 Take a photo (rear camera via `capture="environment"`) · 🖼️ Choose from gallery · 🗑️ Remove (when a photo exists) · Cancel.
+- **v=32** — Professional UI polish: layered shadow tokens, refined topbar with glass-blur icon buttons, frosted-glass tabbar, accent stripes on stat tiles, uppercase tracked section headings, refined empty-state cards.
+- **v=31** — Workshop delete from the owner side: Settings → Business Info → Danger zone with red `🗑️ Delete this workshop` button. Cascades through every order / lot / assignment / production / payment via `Domain.deleteAdminAndData`, signs the owner out, routes to login.
+- **v=30** — Improved error toast in `Domain.addUser` to detect RLS denial and surface "Re-run supabase/schema.sql to refresh RLS policies, then try again."
+- **v=29** — MilkMate-style Settings sheet: rounded card list with role-specific sub-pages. Software-admin sees UPI Payments / Subscription Plans / Notifications / Appearance / Language; owner sees My Profile / Business Info / Pricing & Payments / Notifications / Appearance / Language; contractor & worker see Profile / Notifications / Appearance / Language. Uses DarziMate's indigo + gold palette.
 - **v=28** — `APP_VERSION` constant stamped into the topbar subtitle (`· v28`) so a sticky service worker / stale APK is obvious at a glance.
 - **v=27** — Software admin's Pending tab auto-refreshes every 5s while open. Realtime + manual refresh + tab-switch pull all still work; this is just defence in depth so a dropped channel never leaves a new application invisible.
 - **v=26** — `SOFTWARE_ADMIN_PASSWORD` baked into `supabase-config.js`; sign-in form auto-fills the password the moment the configured admin mobile is typed, and the Auth.signIn bootstrap path uses the same hardcoded password. Software admin login is now one-tap.
@@ -376,4 +422,4 @@ If a new chat session starts and you want to continue:
 
 ---
 
-*Last updated for the v=28 cache.*
+*Last updated for the v=52 cache.*
