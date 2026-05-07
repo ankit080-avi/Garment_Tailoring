@@ -100,7 +100,12 @@ python -m http.server 8767 --directory D:\milkmate\Garment_Tailoring
 
 ### 3. Bump cache version
 
-Currently on **v=15**. In `index.html`, increment `?v=N` on `styles.css`, `supabase-config.js`, and `app.js` so the service worker picks up new code:
+Currently on **v=28**. Three files must bump together so the service worker
+picks up new code AND the topbar version stamp matches:
+
+- `index.html` — increment `?v=N` on `styles.css`, `supabase-config.js`, and `app.js`
+- `sw.js` — bump `CACHE` and the `?v=N` strings in `ASSETS`
+- `app.js` — bump the `APP_VERSION` constant near the top so the topbar shows the right version
 
 ```html
 <link rel="stylesheet" href="styles.css?v=N+1"/>
@@ -108,7 +113,7 @@ Currently on **v=15**. In `index.html`, increment `?v=N` on `styles.css`, `supab
 <script src="app.js?v=N+1" defer></script>
 ```
 
-And in `sw.js`, bump `CACHE` and the `?v=N` strings in `ASSETS`.
+The topbar shows `v28` (or whatever the running version is) in the subtitle — invaluable for confirming a sticky service worker isn't keeping an old build alive on a phone.
 
 ### 4. Deploy to production
 
@@ -168,17 +173,22 @@ window.DARZIMATE_SUPABASE = {
   URL:    'https://YOUR-REF.supabase.co',
   KEY:    'sb_publishable_xxx',
   SCHEMA: 'public',
-  SOFTWARE_ADMIN_MOBILE: '8858141463'
+  SOFTWARE_ADMIN_MOBILE:   '8858141463',
+  SOFTWARE_ADMIN_PASSWORD: 'ankit@4545'
 };
 ```
 
-### 5. Sign up the software admin
+### 5. Sign in as the software admin
 
-- Open the app → Sign up tab → role = Owner
-- Enter mobile `8858141463` (must match `SOFTWARE_ADMIN_MOBILE`) and a password
-- The signup auto-elevates this user to `software_admin` role
+No separate signup step needed — `Auth.signIn` auto-bootstraps on first use:
 
-Future admin signups go to `status='pending'` and wait for the software admin to approve.
+- Open the app → **Sign in** tab (default)
+- Enter mobile `8858141463` — the password field auto-fills with `SOFTWARE_ADMIN_PASSWORD`
+- Tap **Sign in**
+
+If no software admin row exists yet, the app calls `auth.signUp` + inserts a `users` row with `role='software_admin'` transparently. From the second login onward it's a normal sign-in. Rotate `SOFTWARE_ADMIN_PASSWORD` in `supabase-config.js` if you ever hand the credentials to someone else.
+
+Future Owner signups go to `status='pending'` and wait for the software admin to approve.
 
 ---
 
@@ -279,16 +289,22 @@ delete from auth.users;
 
 ## Common debugging
 
+First check: **look at the topbar subtitle on the device.** It always ends with `· vNN`. If that NN doesn't match the latest version, the service worker is serving stale code. Force-stop the APK + reopen, or long-press app icon → App info → Storage → **Clear storage**.
+
 | Problem | Fix |
 |---|---|
-| App shows old version | Hard-refresh (Ctrl+Shift+R) or force-stop the APK and reopen. Bump `?v=N` in index.html and SW VERSION on next deploy. |
+| App shows old version | Look at the topbar `vNN` — that's what's actually running. Force-stop + reopen, or clear app storage. Bump `?v=N` in `index.html`, `sw.js`, AND `APP_VERSION` in `app.js` together on next deploy. |
 | "Email signups are disabled" on signup | Auth → Providers → Email → ensure **Enable Email provider** is ON. |
-| "Database error querying schema" on signup or signin | The auth user is in a half-broken state (often from manual SQL inserts). Wipe auth + profile rows for that mobile, re-run the latest schema, sign up via UI. |
+| "Database error querying schema" on signup or signin | The auth user is in a half-broken state. Wipe auth + profile rows for that mobile, re-run the latest schema, sign up via UI. |
 | "infinite recursion detected in policy for relation users" | Old version of `users_select` policy without the `current_parent_user_id()` SECURITY DEFINER helper. Re-run the latest `schema.sql` — it drops and recreates the policy. |
-| "Profile row missing" on signin | `auth.users` row exists but `public.users` doesn't. Manually insert: `insert into public.users (id, mobile, name, role, status) select id, 'XXX', 'Name', 'admin', 'active' from auth.users where email = 'XXX@karkhana.local';` |
-| Software admin doesn't see new pending application | Pull-to-refresh, or tap the topbar `⟳` button. Realtime occasionally lags ~5s on cold channels. |
-| Owner stuck on "Waiting for approval" after admin approves | They need to tap "Refresh status". |
-| Owner stuck on "Waiting for approval" after admin rejects | Bug fixed in v=12 — make sure their browser has the latest cache. |
+| "Profile row missing" on signin | `auth.users` row exists but `public.users` doesn't — usually an orphan from a signup that failed at the RLS step before v=23. Wipe orphans: `delete from auth.users where id in (select au.id from auth.users au left join public.users pu on pu.id = au.id::text where pu.id is null);` then sign up again. |
+| "Shop insert blocked. Re-run supabase/schema.sql to refresh RLS policies." | Old `shops_select` policy without the `or owner_user_id = auth.uid()::text` clause. Re-run the latest schema. |
+| "Couldn't approve / reject / delete — your account isn't allowed to update this user." | Old `users_update` / `users_delete` policy. Re-run the latest schema. |
+| Software admin doesn't see new pending application | Topbar must show `v27` or later (auto-refreshes Pending tab every 5s). If still missing, run `select id, mobile, name, role, status from public.users where status='pending';` in SQL editor — if the row isn't there, the new owner's signup failed; if it IS there, post the topbar version and we'll look at the cache. |
+| Approve / Reject / Delete looks like it succeeded but the row reappears later | Pre-v=18 / v=24 bug: `.update()` / `.delete()` had no `.select()`, so silent RLS denials looked like success. Make sure topbar shows `v24` or later, and re-run the latest schema. |
+| Owner stuck on "Waiting for approval" after admin approves/rejects | Pre-v=17 bug: realtime swapped `Store.data.users` but `App.user` stayed pinned to the stale object. Make sure topbar shows `v17` or later. |
+| New contractor added by Owner disappears after a few seconds | Pre-v=21 bug: contractor row was pushed to local cache only and the next realtime fetch wiped it. Make sure topbar shows `v21` or later. |
+| Signup says "Profile insert blocked. Re-run supabase/schema.sql to refresh RLS policies." | Exactly what it says — re-run `supabase/schema.sql` in the SQL editor. The signup paths use `.insert().select().single()` and refuse to claim success on 0 rows. |
 
 ### Useful console commands
 
@@ -335,6 +351,19 @@ If a new chat session starts and you want to continue:
 
 ## Changelog highlights
 
+- **v=28** — `APP_VERSION` constant stamped into the topbar subtitle (`· v28`) so a sticky service worker / stale APK is obvious at a glance.
+- **v=27** — Software admin's Pending tab auto-refreshes every 5s while open. Realtime + manual refresh + tab-switch pull all still work; this is just defence in depth so a dropped channel never leaves a new application invisible.
+- **v=26** — `SOFTWARE_ADMIN_PASSWORD` baked into `supabase-config.js`; sign-in form auto-fills the password the moment the configured admin mobile is typed, and the Auth.signIn bootstrap path uses the same hardcoded password. Software admin login is now one-tap.
+- **v=25** — `Auth.signIn` auto-bootstraps the software admin on first use (no separate signup step). Only triggers for `SOFTWARE_ADMIN_MOBILE` and only when "invalid credentials" means "no such user".
+- **v=24** — `Domain.deleteAdminAndData` uses `.delete().eq().select()` and refuses to claim success on 0 rows (same fix as v=18 for approve/reject). Approve / Reject / Re-approve / Delete buttons each do `await Store.loadFromRemote()` after the write so the UI converges to server truth.
+- **v=23** — All signup paths (`signUpAdmin` / `signUpContractor` / `signUpWorker`) use `.insert().select().single()` and throw a clear "Re-run supabase/schema.sql" error on RLS-silent denials. `goTab()` fires `loadFromRemote()` on every software-admin tab (home / pending / workshops), not just pending.
+- **v=22** — Software admin's Workshops tab + home list filter to `status in (active, pending)` — rejected applications no longer pollute the live workshops list. Pending tab gains a "Rejected applications" section with **Re-approve** and **🗑 Delete** buttons (calls existing `Domain.deleteAdminAndData`).
+- **v=21** — `Domain.addUser` / `linkAdminContractor` / `linkContractorByMobile` are Supabase-first via `.insert().select().single()`; new contractors now persist instead of being clobbered by the next realtime fetch. `linkContractorByMobile` falls back to a direct Supabase lookup when the local cache misses.
+- **v=20** — Topbar pads its content by `env(safe-area-inset-top)` so the device clock stops overlapping the title in standalone PWA / APK; gradient still fills the strip via a smaller `::before`. Section headings show counts ("Approved workshops (N)", "Pending applications (N)") matching MilkMate's pattern.
+- **v=19** — Refresh toast surfaces counts ("Refreshed · N workshops · M pending"). `goTab(pending)` auto-pulls. `refreshApp()` drops + recreates the realtime channel so a stale connection is rebuilt.
+- **v=18** — `Domain.approveAdmin` / `rejectAdmin` use `.update().eq().select()` and refuse to claim success on 0 rows. Replace local user row with the server's authoritative version. Switched from `Store.save()` to `Store.saveCache()` so no `upsertAll()` race.
+- **v=17** — Realtime users-table updates re-bind `App.user` to the freshly-fetched row so status flips (pending → rejected/active) propagate to the rendered screen.
+- **v=16** — `Store.data.shop` derived via `Domain.shopForUser()` at render time (was empty stub before — Owner home subtitle showed "Owner · ", `addDesign` / `addOrder` / `addPayment` wrote `shop_id=''`). Login segmented control + role picker classes; tabbar primary accent indicator; stats grid orphan-tile fix; modal drag handle; PWA icons replaced with `icon.svg` / `icon-maskable.svg`.
 - **v=15** — UI polish (tighter stat tiles, cleaner section headings, smoother list items); pull-to-refresh threshold raised to 90 px with native-style arrow flip on cross + primary-colour ring; APK status-bar overlap fixed via `::before` pseudo-element so dashboard cards no longer clip at the top.
 - **v=14** — Software admin "Delete workshop" with cascade through all related rows (orders/lots/assignments/production/payments/etc); shops_delete + users_delete RLS policies. Hindi role labels swapped to English business terms (Owner / Contractor / Worker / Workshop). Pull-to-refresh first introduced. Initial APK status-bar fix.
 - **v=13** — Settings sheet (gear icon top-right) with profile photo upload, theme picker (Light · indigo / Midnight / Forest / Cream), Sign out. Profile photo replaces gear icon as a circular avatar. Themes apply via `body.theme-*` CSS-variable overrides; persisted to localStorage and applied before first paint to avoid flash.
@@ -347,4 +376,4 @@ If a new chat session starts and you want to continue:
 
 ---
 
-*Last updated for the v=15 cache.*
+*Last updated for the v=28 cache.*
