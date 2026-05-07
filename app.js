@@ -623,7 +623,24 @@ const Domain = {
     return a?.shop_id || null;
   },
   shopById(id) {
-    return (Store.data.shops || [Store.data.shop]).find(s => s.id === id);
+    return (Store.data.shops || []).find(s => s.id === id);
+  },
+  // Resolve the "current shop" for any role: owners by direct shop_id,
+  // contractors via any lot they hold, workers via their parent contractor.
+  shopForUser(u) {
+    if (!u) return null;
+    const shops = Store.data.shops || [];
+    if (u.shop_id) return shops.find(s => s.id === u.shop_id) || null;
+    if (u.role === 'contractor') {
+      const lot = (Store.data.lots || []).find(l => l.contractor_id === u.id);
+      return lot ? shops.find(s => s.id === lot.shop_id) || null : null;
+    }
+    if (u.role === 'worker') {
+      const wa = (Store.data.worker_assignments || []).find(a => a.worker_id === u.id);
+      const lot = wa ? (Store.data.lots || []).find(l => l.id === wa.lot_id) : null;
+      return lot ? shops.find(s => s.id === lot.shop_id) || null : null;
+    }
+    return null;
   },
 
   async addUser({ name, mobile, role, parent_user_id, password }) {
@@ -873,6 +890,12 @@ function render() {
   view.innerHTML = '';
   tabbar.innerHTML = '';
 
+  // Keep Store.data.shop in sync with the current user. Owners get their own
+  // shop; software_admin / contractor / worker fall back to the first shop
+  // their user row references via lots/assignments, else a safe stub.
+  Store.data.shop = Domain.shopForUser(App.user) ||
+    { id: '', name: '', owner_user_id: '' };
+
   if (!App.user) {
     document.getElementById('app').classList.add('no-tab');
     tabbar.hidden = true;
@@ -961,12 +984,17 @@ function viewLogin() {
   let mode = App._loginMode || 'signin';   // 'signin' | 'signup'
   let signupRole = App._signupRole || 'admin';  // 'admin' | 'contractor' | 'worker'
 
-  const tabs = el('div', { class: 'row gap-12 mb-12', style: 'border:1px solid var(--c-border);border-radius:12px;padding:4px' });
-  const tabSignIn = el('button', { type: 'button', style: 'flex:1', onclick: () => { App._loginMode = 'signin'; render(); } }, 'Sign in');
-  const tabSignUp = el('button', { type: 'button', style: 'flex:1', onclick: () => { App._loginMode = 'signup'; render(); } }, 'Sign up');
-  tabSignIn.className = 'btn sm ' + (mode === 'signin' ? '' : 'ghost');
-  tabSignUp.className = 'btn sm ' + (mode === 'signup' ? '' : 'ghost');
-  tabs.appendChild(tabSignIn); tabs.appendChild(tabSignUp);
+  const tabs = el('div', { class: 'seg' });
+  tabs.appendChild(el('button', {
+    type: 'button',
+    class: 'seg-btn' + (mode === 'signin' ? ' active' : ''),
+    onclick: () => { App._loginMode = 'signin'; render(); }
+  }, 'Sign in'));
+  tabs.appendChild(el('button', {
+    type: 'button',
+    class: 'seg-btn' + (mode === 'signup' ? ' active' : ''),
+    onclick: () => { App._loginMode = 'signup'; render(); }
+  }, 'Sign up'));
   wrap.appendChild(tabs);
 
   if (mode === 'signin') {
@@ -1023,9 +1051,9 @@ function viewSignUpForm(role) {
   const wrap = el('div');
 
   // Role picker
-  const rolePicker = el('div', { class: 'card' },
-    el('div', { class: 'muted', style: 'margin-bottom:8px;font-size:13px' }, 'I am a…'),
-    el('div', { class: 'row gap-12' },
+  const rolePicker = el('div', { class: 'card role-picker-card' },
+    el('div', { class: 'role-picker-label' }, 'I am a…'),
+    el('div', { class: 'role-picker' },
       roleBtn('admin',      'Owner',   '👔', role),
       roleBtn('contractor', 'Contractor', '🧑‍🔧', role),
       roleBtn('worker',     'Worker',      '✂️', role)
@@ -1042,12 +1070,11 @@ function viewSignUpForm(role) {
 function roleBtn(roleKey, label, ico, current) {
   return el('button', {
     type: 'button',
-    class: 'btn sm ' + (current === roleKey ? '' : 'ghost'),
-    style: 'flex:1;flex-direction:column;height:auto;padding:10px 4px',
+    class: 'role-btn' + (current === roleKey ? ' active' : ''),
     onclick: () => { App._signupRole = roleKey; render(); }
   },
-    el('div', { style: 'font-size:20px' }, ico),
-    el('div', null, label)
+    el('div', { class: 'role-btn-ico' }, ico),
+    el('div', { class: 'role-btn-label' }, label)
   );
 }
 
@@ -1584,7 +1611,7 @@ function viewAdmin() {
   if (App.detail) return renderAdminDetail(wrap);
 
   const titles = {
-    home:        'Owner · ' + Store.data.shop.name,
+    home:        Store.data.shop?.name ? 'Owner · ' + Store.data.shop.name : 'Owner',
     orders:      'Bulk orders',
     contractors: 'Contractors',
     designs:     'Designs & rates',

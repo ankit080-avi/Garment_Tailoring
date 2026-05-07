@@ -1,11 +1,11 @@
 // DarziMate service worker — minimal cache for app shell.
-const CACHE = 'darzimate-v15';
+const CACHE = 'darzimate-v16';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=11',
-  './app.js?v=11',
-  './supabase-config.js?v=11',
+  './styles.css?v=16',
+  './app.js?v=16',
+  './supabase-config.js?v=16',
   './manifest.webmanifest'
 ];
 
