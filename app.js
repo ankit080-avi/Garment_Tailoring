@@ -494,24 +494,44 @@ const Domain = {
     return usr?.role === 'admin' && usr?.status === 'pending';
   },
   async approveAdmin(adminId) {
-    const u = this.userById(adminId);
-    if (!u) throw new Error('Admin not found');
-    u.status = 'active';
     if (sb) {
-      const { error } = await sb.from('users').update({ status: 'active' }).eq('id', adminId);
+      // .select() so we can detect RLS blocking the write (returns 0 rows
+      // without erroring) — otherwise the optimistic local update gets
+      // clobbered by the next realtime fetch and the user re-appears in
+      // the pending list.
+      const { data, error } = await sb.from('users')
+        .update({ status: 'active' }).eq('id', adminId).select();
       if (error) throw new Error(error.message);
+      if (!data || data.length === 0) {
+        throw new Error("Couldn't approve — your account isn't allowed to update this user.");
+      }
+      const fresh = data[0];
+      const i = Store.data.users.findIndex(u => u.id === adminId);
+      if (i >= 0) Store.data.users[i] = fresh; else Store.data.users.push(fresh);
+    } else {
+      const u = this.userById(adminId);
+      if (!u) throw new Error('Admin not found');
+      u.status = 'active';
     }
-    Store.save();
+    Store.saveCache();
   },
   async rejectAdmin(adminId, reason) {
-    const u = this.userById(adminId);
-    if (!u) throw new Error('Admin not found');
-    u.status = 'rejected';
     if (sb) {
-      const { error } = await sb.from('users').update({ status: 'rejected' }).eq('id', adminId);
+      const { data, error } = await sb.from('users')
+        .update({ status: 'rejected' }).eq('id', adminId).select();
       if (error) throw new Error(error.message);
+      if (!data || data.length === 0) {
+        throw new Error("Couldn't reject — your account isn't allowed to update this user.");
+      }
+      const fresh = data[0];
+      const i = Store.data.users.findIndex(u => u.id === adminId);
+      if (i >= 0) Store.data.users[i] = fresh; else Store.data.users.push(fresh);
+    } else {
+      const u = this.userById(adminId);
+      if (!u) throw new Error('Admin not found');
+      u.status = 'rejected';
     }
-    Store.save();
+    Store.saveCache();
   },
   // Hard-delete an admin + their entire shop including all production data.
   // Postgres ON DELETE CASCADE on FKs to shops handles most of the chain;
