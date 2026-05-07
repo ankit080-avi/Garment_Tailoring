@@ -1501,23 +1501,72 @@ function softwareAdminPending(wrap) {
   wrap.appendChild(sectionH('Pending applications (' + list.length + ')'));
   if (list.length === 0) {
     wrap.appendChild(emptyState('✅', 'No pending applications'));
+  } else {
+    list.forEach(a => {
+      const shop = Store.data.shops.find(s => s.id === a.shop_id);
+      const card = el('div', { class: 'card' },
+        el('div', { class: 'row between' },
+          el('div', { style: 'flex:1;min-width:0' },
+            el('div', { style: 'font-weight:700' }, a.name),
+            el('div', { class: 'muted', style: 'font-size:13px' },
+              (shop?.name || '—') + ' · ' + a.mobile + ' · applied ' + fmtRelDate(a.created_at)
+            )
+          ),
+          chip('pending', 'open')
+        ),
+        el('div', { class: 'row gap-12 mt-12' },
+          el('button', {
+            class: 'btn', style: 'flex:2',
+            onclick: async () => {
+              try {
+                await Domain.approveAdmin(a.id);
+                toast(a.name + ' approved', 'success');
+                render();
+              } catch (e) { toast(e.message, 'error'); }
+            }
+          }, '✓ Approve'),
+          el('button', {
+            class: 'btn secondary danger', style: 'flex:1',
+            onclick: async () => {
+              if (!confirm('Reject ' + a.name + '?')) return;
+              try {
+                await Domain.rejectAdmin(a.id);
+                toast(a.name + ' rejected', '');
+                render();
+              } catch (e) { toast(e.message, 'error'); }
+            }
+          }, '✗ Reject')
+        )
+      );
+      wrap.appendChild(card);
+    });
+  }
+
+  // Rejected applications — kept off the live workshops list, but surfaced
+  // here so the software admin can clean them up. Each entry has a Delete
+  // button that hard-deletes the user + their shop + all attached data.
+  const rejected = Domain.rejectedAdmins();
+  wrap.appendChild(sectionH('Rejected applications (' + rejected.length + ')'));
+  if (rejected.length === 0) {
+    wrap.appendChild(el('div', { class: 'muted', style: 'padding:8px 2px;font-size:13px' },
+      'No rejected applications.'));
     return;
   }
-  list.forEach(a => {
+  rejected.forEach(a => {
     const shop = Store.data.shops.find(s => s.id === a.shop_id);
     const card = el('div', { class: 'card' },
       el('div', { class: 'row between' },
         el('div', { style: 'flex:1;min-width:0' },
           el('div', { style: 'font-weight:700' }, a.name),
           el('div', { class: 'muted', style: 'font-size:13px' },
-            (shop?.name || '—') + ' · ' + a.mobile + ' · applied ' + fmtRelDate(a.created_at)
+            (shop?.name || '—') + ' · ' + a.mobile
           )
         ),
-        chip('pending', 'open')
+        chip('rejected', 'cancelled')
       ),
       el('div', { class: 'row gap-12 mt-12' },
         el('button', {
-          class: 'btn', style: 'flex:2',
+          class: 'btn ghost', style: 'flex:1',
           onclick: async () => {
             try {
               await Domain.approveAdmin(a.id);
@@ -1525,18 +1574,20 @@ function softwareAdminPending(wrap) {
               render();
             } catch (e) { toast(e.message, 'error'); }
           }
-        }, '✓ Approve'),
+        }, '↺ Re-approve'),
         el('button', {
-          class: 'btn secondary danger', style: 'flex:1',
+          class: 'btn danger', style: 'flex:1',
           onclick: async () => {
-            if (!confirm('Reject ' + a.name + '?')) return;
+            if (!confirm('Permanently delete ' + a.name +
+              "'s application" + (shop ? ' and workshop "' + shop.name + '"' : '') +
+              '? This cannot be undone.')) return;
             try {
-              await Domain.rejectAdmin(a.id);
-              toast(a.name + ' rejected', '');
+              await Domain.deleteAdminAndData(a.id);
+              toast(a.name + ' deleted', 'success');
               render();
             } catch (e) { toast(e.message, 'error'); }
           }
-        }, '✗ Reject')
+        }, '🗑 Delete')
       )
     );
     wrap.appendChild(card);
@@ -1544,7 +1595,14 @@ function softwareAdminPending(wrap) {
 }
 
 function softwareAdminKarkhanas(wrap) {
-  const list = Store.data.shops;
+  // Only show workshops whose owner is pending or active. Rejected ones live
+  // on the Pending tab where they can be deleted; mixing them in here makes
+  // the live workshops list noisy.
+  const list = Store.data.shops.filter(s => {
+    const owner = Store.data.users.find(u => u.id === s.owner_user_id);
+    return owner && (owner.status === 'active' || owner.status === 'pending');
+  });
+  wrap.appendChild(sectionH('Workshops (' + list.length + ')'));
   if (list.length === 0) {
     wrap.appendChild(emptyState('🏭', 'No workshops yet'));
     return;
