@@ -9,6 +9,11 @@
 (() => {
 'use strict';
 
+// Bump this whenever index.html / sw.js cache versions change so the topbar
+// can show what code is actually running on the device — invaluable when a
+// stale service worker keeps an old build alive.
+const APP_VERSION = '28';
+
 /* ─── Supabase client (optional) ──────────────────────────── */
 const cfg = window.DARZIMATE_SUPABASE || { URL: '', KEY: '', SCHEMA: 'public', SOFTWARE_ADMIN_MOBILE: '' };
 const SCHEMA = cfg.SCHEMA || 'public';
@@ -1393,7 +1398,7 @@ function topbar(title, subtitle, opts = {}) {
     left,
     el('div', { style: 'flex:1' },
       el('h2', null, title),
-      subtitle ? el('div', { class: 'sub' }, subtitle) : null
+      subtitle ? el('div', { class: 'sub' }, subtitle + ' · v' + APP_VERSION) : el('div', { class: 'sub' }, 'v' + APP_VERSION)
     ),
     refreshBtn,
     right
