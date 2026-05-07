@@ -1447,14 +1447,22 @@ function softwareAdminHome(wrap) {
     ));
   }
 
-  wrap.appendChild(sectionH('Recent workshops'));
-  const recent = allShops.slice().reverse().slice(0, 5);
-  if (recent.length === 0) wrap.appendChild(emptyState('🏭', 'No workshops yet'));
+  // Only show shops whose owner is active — pending/rejected applications
+  // belong on the Pending tab, not mixed in with live workshops. Matches
+  // MilkMate's "Approved owners" pattern.
+  const activeShops = allShops.filter(s => {
+    const owner = Store.data.users.find(u => u.id === s.owner_user_id);
+    return owner && owner.status === 'active';
+  });
+  wrap.appendChild(sectionH('Approved workshops (' + activeShops.length + ')'));
+  const recent = activeShops.slice().reverse().slice(0, 5);
+  if (recent.length === 0) wrap.appendChild(emptyState('🏭', 'No active workshops yet'));
   else recent.forEach(s => wrap.appendChild(karkhanaListItem(s)));
 }
 
 function softwareAdminPending(wrap) {
   const list = Domain.pendingAdmins();
+  wrap.appendChild(sectionH('Pending applications (' + list.length + ')'));
   if (list.length === 0) {
     wrap.appendChild(emptyState('✅', 'No pending applications'));
     return;

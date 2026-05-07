@@ -188,21 +188,25 @@ button { font-family: inherit; }
   align-items: center;
   gap: 8px;
   margin: -16px -16px 16px -16px;
-  padding: 14px 16px;
+  /* Push content below the device status bar (APK / standalone PWA) so the
+     phone clock no longer overlaps the title text. The view's own padding-top
+     (var(--pad)) sits above this, so the gradient still meets the screen edge
+     thanks to the negative margin and the ::before fill below. */
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px;
   background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-600) 100%);
   color: #fff;
   position: sticky;
   top: 0;
   z-index: 5;
 }
-/* Extend the topbar's gradient up into the device status bar (APK / standalone PWA)
-   without changing the topbar's flow box, so dashboard cards aren't clipped. */
+/* Fill the visual gap above the topbar (caused by .view padding-top) so the
+   gradient runs all the way to the top edge of the screen. */
 .topbar::before {
   content: '';
   position: absolute;
   left: 0; right: 0;
-  top: calc(-1 * env(safe-area-inset-top, 0px));
-  height: env(safe-area-inset-top, 0px);
+  top: calc(-1 * var(--pad));
+  height: var(--pad);
   background: var(--c-primary);
   pointer-events: none;
 }
