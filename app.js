@@ -826,11 +826,14 @@ const Auth = {
 
     if (isPlatformAdmin) {
       // Platform / software admin: no shop of their own, sees every karkhana.
-      const { error: e } = await sb.from('users').insert({
+      // .select() so a silent RLS denial surfaces here instead of leaving an
+      // orphaned auth.users row + a confusing "Profile row missing" later.
+      const { data: row, error: e } = await sb.from('users').insert({
         id: userId, shop_id: null, mobile: cleanMobile, name: cleanName,
         role: 'software_admin', status: 'active'
-      });
+      }).select().single();
       if (e) throw new Error('Could not create profile: ' + e.message);
+      if (!row) throw new Error('Profile insert blocked. Re-run supabase/schema.sql to refresh RLS policies.');
       await Store.loadFromRemote();
       return { userId, role: 'software_admin' };
     }
@@ -838,18 +841,20 @@ const Auth = {
     // Regular Owner: create shop + user row, status='pending' until approved.
     const shopId = uid('shop');
     {
-      const { error: e1 } = await sb.from('shops').insert({
+      const { data: shopRow, error: e1 } = await sb.from('shops').insert({
         id: shopId, name: shop_name || (cleanName + "'s Workshop"),
         owner_user_id: userId
-      });
+      }).select().single();
       if (e1) throw new Error('Could not create shop: ' + e1.message);
+      if (!shopRow) throw new Error('Shop insert blocked. Re-run supabase/schema.sql to refresh RLS policies.');
     }
     {
-      const { error: e2 } = await sb.from('users').insert({
+      const { data: userRow, error: e2 } = await sb.from('users').insert({
         id: userId, shop_id: shopId, mobile: cleanMobile, name: cleanName,
         role: 'admin', status: 'pending'
-      });
+      }).select().single();
       if (e2) throw new Error('Could not create profile: ' + e2.message);
+      if (!userRow) throw new Error('Profile insert blocked. Re-run supabase/schema.sql to refresh RLS policies.');
     }
 
     await Store.loadFromRemote();
@@ -875,18 +880,20 @@ const Auth = {
     const userId = data.user.id;
 
     {
-      const { error: e1 } = await sb.from('users').insert({
+      const { data: userRow, error: e1 } = await sb.from('users').insert({
         id: userId, shop_id: null, mobile: String(mobile).trim(),
         name: String(name).trim(), role: 'contractor', status: 'active'
-      });
+      }).select().single();
       if (e1) throw new Error('Could not create profile: ' + e1.message);
+      if (!userRow) throw new Error('Profile insert blocked. Re-run supabase/schema.sql to refresh RLS policies.');
     }
     {
-      const { error: e2 } = await sb.from('admin_contractors').insert({
+      const { data: linkRow, error: e2 } = await sb.from('admin_contractors').insert({
         id: uid('ac'), admin_id: admin.id, contractor_id: userId,
         status: 'active', since: today()
-      });
+      }).select().single();
       if (e2) throw new Error('Could not link to admin: ' + e2.message);
+      if (!linkRow) throw new Error('Link insert blocked. Re-run supabase/schema.sql to refresh RLS policies.');
     }
 
     await Store.loadFromRemote();
@@ -911,12 +918,13 @@ const Auth = {
     if (!data.session) throw new Error('Email confirmation is enabled. Disable it in Supabase Auth settings, then try again.');
     const userId = data.user.id;
 
-    const { error: e1 } = await sb.from('users').insert({
+    const { data: workerRow, error: e1 } = await sb.from('users').insert({
       id: userId, shop_id: null, mobile: String(mobile).trim(),
       name: String(name).trim(), role: 'worker',
       parent_user_id: contractor.id, status: 'active'
-    });
+    }).select().single();
     if (e1) throw new Error('Could not create profile: ' + e1.message);
+    if (!workerRow) throw new Error('Profile insert blocked. Re-run supabase/schema.sql to refresh RLS policies.');
 
     await Store.loadFromRemote();
     return { userId };
@@ -945,11 +953,12 @@ function navigate(opts = {}) {
 }
 function goTab(tab) {
   App.tab = tab; App.detail = null; render();
-  // Software admin's Pending tab is the most time-sensitive view: a brand
-  // new owner signup must show up the moment the admin lands here, even if
-  // realtime is asleep or the local cache is stale. Fire-and-forget pull
-  // so the UI updates as soon as data arrives.
-  if (App.user && App.user.role === 'software_admin' && tab === 'pending' && REMOTE_ENABLED) {
+  // Software admin tabs are inherently time-sensitive — a brand-new owner
+  // signup must show up the moment the admin opens any of these views, even
+  // if the realtime channel is asleep or the local cache is stale. Fire-
+  // and-forget pull on every tab change so the UI converges to server truth.
+  if (App.user && App.user.role === 'software_admin' && REMOTE_ENABLED &&
+      ['home', 'pending', 'karkhanas'].includes(tab)) {
     Store.loadFromRemote().then(ok => { if (ok) render(); }).catch(() => {});
   }
 }
