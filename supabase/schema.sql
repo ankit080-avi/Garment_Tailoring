@@ -253,7 +253,15 @@ end $$;
 
 -- SHOPS
 create policy shops_select on shops for select
-  using (is_software_admin() or id = current_shop_id());
+  using (
+    is_software_admin()
+    or id = current_shop_id()
+    -- Self-signup: a brand-new owner has just inserted their shop but their
+    -- own users row doesn't exist yet, so current_shop_id() is null. Without
+    -- this clause, .insert().select() round-trips fail with 0 rows and the
+    -- caller misreads it as an RLS denial.
+    or owner_user_id = auth.uid()::text
+  );
 create policy shops_self_insert on shops for insert
   with check (owner_user_id = auth.uid()::text);
 create policy shops_update on shops for update
